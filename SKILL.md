@@ -1,3 +1,8 @@
+---
+name: twitter-cli
+description: Read Twitter/X timeline, bookmarks, and user posts from terminal without API keys
+---
+
 # twitter-cli Skill
 
 Use this skill when the user wants to read Twitter/X content from terminal without API keys.
