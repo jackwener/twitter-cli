@@ -173,7 +173,6 @@ twitter-cli ships with a [`SKILL.md`](./SKILL.md) so AI agents can execute commo
 #### Claude Code / Antigravity
 
 ```bash
-# Recommended: install the skill directly from GitHub
 npx skills add jackwener/twitter-cli
 
 # Clone into your project's skills directory
@@ -281,7 +280,6 @@ twitter-cli 提供了 [`SKILL.md`](./SKILL.md)，可让 AI Agent 更稳定地调
 #### Claude Code / Antigravity
 
 ```bash
-# 推荐：直接从 GitHub 安装 skill
 npx skills add jackwener/twitter-cli
 
 # 克隆到项目 skills 目录
