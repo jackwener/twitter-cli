@@ -26,6 +26,9 @@ twitter feed -t following
 # Bookmarks
 twitter favorite
 
+# Likes (own liked tweets)
+twitter likes
+
 # User profile and posts
 twitter user <screen_name>
 twitter user-posts <screen_name> --max 20
@@ -48,6 +51,7 @@ Filtering is opt-in (disabled by default). Enable with `--filter`.
 ```bash
 twitter feed --filter
 twitter favorite --filter
+twitter likes --filter
 ```
 
 The scoring formula:
