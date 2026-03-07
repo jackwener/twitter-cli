@@ -27,6 +27,8 @@ FALLBACK_QUERY_IDS = {
     "Bookmarks": "VFdMm9iVZxlU6hD86gfW_A",
     "UserByScreenName": "1VOOyvKkiI3FMmkeDNxM9A",
     "UserTweets": "E3opETHurmVJflFsUBVuUQ",
+    "Likes": "yrFhBQCFo96rIBH28a4T2A",
+    "Viewer": "zWQLM9HIVahRSUvzUH4lDw",
 }
 
 TWITTER_OPENAPI_URL = (
@@ -300,6 +302,31 @@ class TwitterClient:
                 "withVoice": True,
                 "withV2Timeline": True,
             },
+        )
+
+    def fetch_current_user_id(self):
+        # type: () -> str
+        """Fetch the authenticated user's ID via the Viewer endpoint."""
+        features = {
+            "responsive_web_graphql_exclude_directive_enabled": True,
+            "verified_phone_label_enabled": False,
+            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+            "responsive_web_graphql_timeline_navigation_enabled": True,
+        }
+        data = self._graphql_get("Viewer", {}, features)
+        user_id = _deep_get(data, "data", "viewer", "user_results", "result", "rest_id")
+        if not user_id:
+            raise RuntimeError("Could not resolve current user ID")
+        return user_id
+
+    def fetch_likes(self, user_id, count=20):
+        # type: (str, int) -> List[Tweet]
+        """Fetch liked tweets for a user (only works for the authenticated user)."""
+        return self._fetch_timeline(
+            "Likes",
+            count,
+            lambda data: _deep_get(data, "data", "user", "result", "timeline", "timeline", "instructions"),
+            extra_variables={"userId": user_id},
         )
 
     def _fetch_timeline(self, operation_name, count, get_instructions, extra_variables=None):

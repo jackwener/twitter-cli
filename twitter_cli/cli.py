@@ -194,6 +194,43 @@ def favorite(max_count, as_json, output_file, do_filter):
 
 
 @cli.command()
+@click.option("--max", "-n", "max_count", type=int, default=None, help="Max number of tweets to fetch.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.option("--output", "-o", "output_file", type=str, default=None, help="Save tweets to JSON file.")
+@click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
+def likes(max_count, as_json, output_file, do_filter):
+    # type: (Optional[int], bool, Optional[str], bool) -> None
+    """Fetch your liked tweets (only available for the authenticated user)."""
+    config = load_config()
+    try:
+        fetch_count = _resolve_fetch_count(max_count, config.get("fetch", {}).get("count", 50))
+        client = _get_client()
+        console.print("👤 Resolving your user ID...")
+        user_id = client.fetch_current_user_id()
+        console.print("❤️ Fetching likes (%d tweets)...\n" % fetch_count)
+        start = time.time()
+        tweets = client.fetch_likes(user_id, fetch_count)
+        elapsed = time.time() - start
+        console.print("✅ Fetched %d likes in %.1fs\n" % (len(tweets), elapsed))
+    except RuntimeError as exc:
+        console.print("[red]❌ %s[/red]" % exc)
+        sys.exit(1)
+
+    filtered = _apply_filter(tweets, do_filter, config)
+
+    if output_file:
+        Path(output_file).write_text(tweets_to_json(filtered), encoding="utf-8")
+        console.print("💾 Saved to %s\n" % output_file)
+
+    if as_json:
+        click.echo(tweets_to_json(filtered))
+        return
+
+    print_tweet_table(filtered, console, title="❤️ Likes — %d tweets" % len(filtered))
+    console.print()
+
+
+@cli.command()
 @click.argument("screen_name")
 def user(screen_name):
     # type: (str,) -> None

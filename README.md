@@ -19,6 +19,7 @@ A terminal-first CLI for Twitter/X: read timelines, bookmarks, and user profiles
 
 - Timeline: fetch `for-you` and `following` feeds
 - Bookmarks: list saved tweets from your account
+- Likes: view your liked tweets
 - User lookup: fetch user profile and recent tweets
 - JSON output: export feed/bookmarks/user tweets for scripting
 - Optional scoring filter: rank tweets by engagement weights
@@ -66,6 +67,10 @@ twitter feed --input tweets.json
 # Bookmarks
 twitter favorite
 twitter favorite --max 30 --json
+
+# Likes (your own liked tweets)
+twitter likes
+twitter likes --max 20 --json
 
 # User
 twitter user elonmusk
@@ -198,6 +203,7 @@ After installation, OpenClaw can call `twitter-cli` commands directly.
 
 - 时间线读取：支持 `for-you` 和 `following`
 - 收藏读取：查看账号书签推文
+- 点赞列表：查看自己的点赞推文
 - 用户查询：查看用户资料和用户推文
 - JSON 输出：便于脚本处理
 - 可选筛选：按 engagement score 排序
@@ -227,6 +233,9 @@ twitter feed --filter
 
 # 收藏
 twitter favorite
+
+# 点赞列表
+twitter likes
 
 # 用户
 twitter user elonmusk
