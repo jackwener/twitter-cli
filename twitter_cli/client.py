@@ -325,8 +325,14 @@ class TwitterClient:
         return self._fetch_timeline(
             "Likes",
             count,
-            lambda data: _deep_get(data, "data", "user", "result", "timeline", "timeline", "instructions"),
-            extra_variables={"userId": user_id},
+            lambda data: _deep_get(data, "data", "user", "result", "timeline_v2", "timeline", "instructions"),
+            extra_variables={
+                "userId": user_id,
+                "includePromotedContent": False,
+                "withClientEventToken": False,
+                "withBirdwatchNotes": False,
+                "withVoice": True,
+            },
         )
 
     def _fetch_timeline(self, operation_name, count, get_instructions, extra_variables=None):
