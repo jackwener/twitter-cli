@@ -244,5 +244,81 @@ def user_posts(screen_name, max_count, as_json):
     console.print()
 
 
+SEARCH_PRODUCTS = ["Top", "Latest", "Photos", "Videos"]
+
+
+@cli.command()
+@click.argument("query")
+@click.option(
+    "--type",
+    "-t",
+    "product",
+    type=click.Choice(SEARCH_PRODUCTS, case_sensitive=False),
+    default="Top",
+    help="Search tab: Top, Latest, Photos, or Videos.",
+)
+@click.option("--max", "-n", "max_count", type=int, default=20, help="Max number of tweets to fetch.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
+def search(query, product, max_count, as_json, do_filter):
+    # type: (str, str, int, bool, bool) -> None
+    """Search tweets by QUERY string."""
+    config = load_config()
+    try:
+        fetch_count = _resolve_fetch_count(max_count, 20)
+        client = _get_client(config)
+        console.print("🔍 Searching '%s' (%s, %d tweets)...\n" % (query, product, fetch_count))
+        start = time.time()
+        tweets = client.fetch_search(query, fetch_count, product)
+        elapsed = time.time() - start
+        console.print("✅ Found %d tweets in %.1fs\n" % (len(tweets), elapsed))
+    except RuntimeError as exc:
+        console.print("[red]❌ %s[/red]" % exc)
+        sys.exit(1)
+
+    filtered = _apply_filter(tweets, do_filter, config)
+
+    if as_json:
+        click.echo(tweets_to_json(filtered))
+        return
+
+    print_tweet_table(filtered, console, title="🔍 '%s' — %d tweets" % (query, len(filtered)))
+    console.print()
+
+
+@cli.command()
+@click.argument("screen_name")
+@click.option("--max", "-n", "max_count", type=int, default=20, help="Max number of tweets to fetch.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
+def likes(screen_name, max_count, as_json, do_filter):
+    # type: (str, int, bool, bool) -> None
+    """Show tweets liked by a user. SCREEN_NAME is the @handle (without @)."""
+    screen_name = screen_name.lstrip("@")
+    config = load_config()
+    try:
+        fetch_count = _resolve_fetch_count(max_count, 20)
+        client = _get_client(config)
+        console.print("👤 Fetching @%s's profile..." % screen_name)
+        profile = client.fetch_user(screen_name)
+        console.print("❤️  Fetching likes (%d)...\n" % fetch_count)
+        start = time.time()
+        tweets = client.fetch_user_likes(profile.id, fetch_count)
+        elapsed = time.time() - start
+        console.print("✅ Fetched %d liked tweets in %.1fs\n" % (len(tweets), elapsed))
+    except RuntimeError as exc:
+        console.print("[red]❌ %s[/red]" % exc)
+        sys.exit(1)
+
+    filtered = _apply_filter(tweets, do_filter, config)
+
+    if as_json:
+        click.echo(tweets_to_json(filtered))
+        return
+
+    print_tweet_table(filtered, console, title="❤️ @%s likes — %d tweets" % (screen_name, len(filtered)))
+    console.print()
+
+
 if __name__ == "__main__":
     cli()

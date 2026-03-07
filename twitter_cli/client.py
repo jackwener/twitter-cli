@@ -28,6 +28,8 @@ FALLBACK_QUERY_IDS = {
     "Bookmarks": "VFdMm9iVZxlU6hD86gfW_A",
     "UserByScreenName": "1VOOyvKkiI3FMmkeDNxM9A",
     "UserTweets": "E3opETHurmVJflFsUBVuUQ",
+    "SearchTimeline": "VhUd6vHVmLBcw0uX-6jMLA",
+    "Likes": "lIDpu_NWL7_VhimGGt0o6A",
 }
 
 TWITTER_OPENAPI_URL = (
@@ -309,6 +311,44 @@ class TwitterClient:
                 "withQuickPromoteEligibilityTweetFields": True,
                 "withVoice": True,
                 "withV2Timeline": True,
+            },
+        )
+
+    def fetch_user_likes(self, user_id, count=20):
+        # type: (str, int) -> List[Tweet]
+        """Fetch tweets liked by a user."""
+        return self._fetch_timeline(
+            "Likes",
+            count,
+            lambda data: _deep_get(data, "data", "user", "result", "timeline_v2", "timeline", "instructions"),
+            extra_variables={
+                "userId": user_id,
+                "includePromotedContent": False,
+                "withClientEventToken": False,
+                "withBirdwatchNotes": False,
+                "withVoice": True,
+            },
+        )
+
+    def fetch_search(self, query, count=20, product="Top"):
+        # type: (str, int, str) -> List[Tweet]
+        """Search tweets by query.
+
+        Args:
+            query: Search query string.
+            count: Max number of tweets to return.
+            product: Search tab — "Top", "Latest", "People", "Photos", "Videos".
+        """
+        return self._fetch_timeline(
+            "SearchTimeline",
+            count,
+            lambda data: _deep_get(
+                data, "data", "search_by_raw_query", "search_timeline", "timeline", "instructions",
+            ),
+            extra_variables={
+                "rawQuery": query,
+                "querySource": "typed_query",
+                "product": product,
             },
         )
 
