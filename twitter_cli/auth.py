@@ -17,13 +17,11 @@ import urllib.error
 import urllib.request
 from typing import Dict, Optional
 
+from .constants import BEARER_TOKEN, USER_AGENT
+
 logger = logging.getLogger(__name__)
 
-# Public bearer token (same as in client.py)
-_BEARER_TOKEN = (
-    "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs"
-    "%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-)
+
 
 
 def load_from_env() -> Optional[Dict[str, str]]:
@@ -49,16 +47,12 @@ def verify_cookies(auth_token, ct0):
     ]
 
     headers = {
-        "Authorization": "Bearer %s" % _BEARER_TOKEN,
+        "Authorization": "Bearer %s" % BEARER_TOKEN,
         "Cookie": "auth_token=%s; ct0=%s" % (auth_token, ct0),
         "X-Csrf-Token": ct0,
         "X-Twitter-Active-User": "yes",
         "X-Twitter-Auth-Type": "OAuth2Session",
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": USER_AGENT,
     }
 
     for url in urls:
@@ -68,7 +62,7 @@ def verify_cookies(auth_token, ct0):
 
         ctx = ssl.create_default_context()
         try:
-            with urllib.request.urlopen(req, context=ctx, timeout=3) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return {"screen_name": data.get("screen_name", "")}
         except urllib.error.HTTPError as e:

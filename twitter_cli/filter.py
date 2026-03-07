@@ -8,12 +8,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 import math
-from typing import Mapping
 
-
-
-# Type alias for filter weights dict
-FilterWeights = Mapping[str, float]
+from .config import _as_float, _as_int
 
 DEFAULT_WEIGHTS = {
     "likes": 1.0,
@@ -95,21 +91,3 @@ def _build_weights(raw_weights):
     for key, default_value in DEFAULT_WEIGHTS.items():
         merged[key] = _as_float(raw_weights.get(key), default_value)
     return merged
-
-
-def _as_int(value, default):
-    # type: (Any, int) -> int
-    """Best-effort int conversion."""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _as_float(value, default):
-    # type: (Any, float) -> float
-    """Best-effort float conversion."""
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default

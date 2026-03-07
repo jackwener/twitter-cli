@@ -7,6 +7,7 @@ Usage:
     twitter feed --filter             # enable score-based filtering
     twitter feed --json               # JSON output
     twitter favorite                  # fetch bookmarks
+    twitter likes                     # fetch your liked tweets
     twitter feed --input tweets.json  # load existing data
     twitter feed --output out.json    # save filtered tweets
     twitter user elonmusk             # view user profile
@@ -64,10 +65,7 @@ def _get_client():
     # type: () -> TwitterClient
     """Create an authenticated API client."""
     console.print("\n🔐 Getting Twitter cookies...")
-    try:
-        cookies = get_cookies()
-    except RuntimeError as exc:
-        raise RuntimeError(str(exc))
+    cookies = get_cookies()
     return TwitterClient(cookies["auth_token"], cookies["ct0"])
 
 
@@ -101,6 +99,35 @@ def cli(verbose):
     # type: (bool) -> None
     """twitter — Twitter/X CLI tool 🐦"""
     _setup_logging(verbose)
+
+
+def _fetch_and_display(fetch_fn, label, emoji, max_count, as_json, output_file, do_filter):
+    # type: (Callable[..., Any], str, str, Optional[int], bool, Optional[str], bool) -> None
+    """Common fetch-filter-display logic for timeline-like commands."""
+    config = load_config()
+    try:
+        fetch_count = _resolve_fetch_count(max_count, config.get("fetch", {}).get("count", 50))
+        console.print("%s Fetching %s (%d tweets)...\n" % (emoji, label, fetch_count))
+        start = time.time()
+        tweets = fetch_fn(fetch_count)
+        elapsed = time.time() - start
+        console.print("✅ Fetched %d %s in %.1fs\n" % (len(tweets), label, elapsed))
+    except RuntimeError as exc:
+        console.print("[red]❌ %s[/red]" % exc)
+        sys.exit(1)
+
+    filtered = _apply_filter(tweets, do_filter, config)
+
+    if output_file:
+        Path(output_file).write_text(tweets_to_json(filtered), encoding="utf-8")
+        console.print("💾 Saved to %s\n" % output_file)
+
+    if as_json:
+        click.echo(tweets_to_json(filtered))
+        return
+
+    print_tweet_table(filtered, console, title="%s %s — %d tweets" % (emoji, label, len(filtered)))
+    console.print()
 
 
 @cli.command()
@@ -166,31 +193,11 @@ def feed(feed_type, max_count, as_json, input_file, output_file, do_filter):
 def favorite(max_count, as_json, output_file, do_filter):
     # type: (Optional[int], bool, Optional[str], bool) -> None
     """Fetch bookmarked (favorite) tweets."""
-    config = load_config()
-    try:
-        fetch_count = _resolve_fetch_count(max_count, config.get("fetch", {}).get("count", 50))
-        client = _get_client()
-        console.print("🔖 Fetching favorites (%d tweets)...\n" % fetch_count)
-        start = time.time()
-        tweets = client.fetch_bookmarks(fetch_count)
-        elapsed = time.time() - start
-        console.print("✅ Fetched %d favorites in %.1fs\n" % (len(tweets), elapsed))
-    except RuntimeError as exc:
-        console.print("[red]❌ %s[/red]" % exc)
-        sys.exit(1)
-
-    filtered = _apply_filter(tweets, do_filter, config)
-
-    if output_file:
-        Path(output_file).write_text(tweets_to_json(filtered), encoding="utf-8")
-        console.print("💾 Saved to %s\n" % output_file)
-
-    if as_json:
-        click.echo(tweets_to_json(filtered))
-        return
-
-    print_tweet_table(filtered, console, title="🔖 Favorites — %d tweets" % len(filtered))
-    console.print()
+    client = _get_client()
+    _fetch_and_display(
+        lambda count: client.fetch_bookmarks(count),
+        "favorites", "🔖", max_count, as_json, output_file, do_filter,
+    )
 
 
 @cli.command()
@@ -201,33 +208,13 @@ def favorite(max_count, as_json, output_file, do_filter):
 def likes(max_count, as_json, output_file, do_filter):
     # type: (Optional[int], bool, Optional[str], bool) -> None
     """Fetch your liked tweets (only available for the authenticated user)."""
-    config = load_config()
-    try:
-        fetch_count = _resolve_fetch_count(max_count, config.get("fetch", {}).get("count", 50))
-        client = _get_client()
-        console.print("👤 Resolving your user ID...")
-        user_id = client.fetch_current_user_id()
-        console.print("❤️ Fetching likes (%d tweets)...\n" % fetch_count)
-        start = time.time()
-        tweets = client.fetch_likes(user_id, fetch_count)
-        elapsed = time.time() - start
-        console.print("✅ Fetched %d likes in %.1fs\n" % (len(tweets), elapsed))
-    except RuntimeError as exc:
-        console.print("[red]❌ %s[/red]" % exc)
-        sys.exit(1)
-
-    filtered = _apply_filter(tweets, do_filter, config)
-
-    if output_file:
-        Path(output_file).write_text(tweets_to_json(filtered), encoding="utf-8")
-        console.print("💾 Saved to %s\n" % output_file)
-
-    if as_json:
-        click.echo(tweets_to_json(filtered))
-        return
-
-    print_tweet_table(filtered, console, title="❤️ Likes — %d tweets" % len(filtered))
-    console.print()
+    client = _get_client()
+    console.print("👤 Resolving your user ID...")
+    user_id = client.fetch_current_user_id()
+    _fetch_and_display(
+        lambda count: client.fetch_likes(user_id, count),
+        "likes", "❤️", max_count, as_json, output_file, do_filter,
+    )
 
 
 @cli.command()

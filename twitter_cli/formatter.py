@@ -7,8 +7,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from .serialization import tweets_to_json as _tweets_to_json
-
 
 def format_number(n):
     # type: (int) -> str
@@ -160,12 +158,6 @@ def print_filter_stats(original_count, filtered, console=None):
         console.print(
             "   Score range: %.1f ~ %.1f" % (bottom_score, top_score)
         )
-
-
-def tweets_to_json(tweets):
-    # type: (List[Tweet]) -> str
-    """Export tweets as JSON string."""
-    return _tweets_to_json(tweets)
 
 
 def print_user_profile(user, console=None):
