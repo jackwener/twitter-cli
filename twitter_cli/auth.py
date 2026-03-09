@@ -252,7 +252,7 @@ def extract_from_browser() -> Optional[Dict[str, str]]:
 
 
 def get_cookies() -> Dict[str, str]:
-    """Get Twitter cookies. Priority: env vars -> browser extraction (Chrome/Edge/Firefox/Brave).
+    """Get Twitter cookies. Priority: env vars -> cache file -> browser extraction.
 
     Raises RuntimeError if no cookies found.
     """
@@ -263,9 +263,17 @@ def get_cookies() -> Dict[str, str]:
     if cookies:
         logger.info("Loaded cookies from environment variables")
 
-    # 2. Try browser extraction (auto-detect)
+    # 2. Try cached cookies (file cache with TTL)
+    if not cookies:
+        cookies = _load_cookie_cache()
+        if cookies:
+            logger.info("Loaded cookies from cache")
+
+    # 3. Try browser extraction (auto-detect)
     if not cookies:
         cookies = extract_from_browser()
+        if cookies:
+            _save_cookie_cache(cookies)
 
     if not cookies:
         raise RuntimeError(
@@ -275,7 +283,69 @@ def get_cookies() -> Dict[str, str]:
         )
 
     # Verify only for explicit auth failures; transient endpoint issues are tolerated.
-    verify_cookies(cookies["auth_token"], cookies["ct0"], cookies.get("cookie_string"))
+    try:
+        verify_cookies(cookies["auth_token"], cookies["ct0"], cookies.get("cookie_string"))
+    except RuntimeError:
+        # Auth failure — invalidate cache and re-extract from browser
+        logger.info("Cookie verification failed, invalidating cache and re-extracting")
+        invalidate_cookie_cache()
+        fresh_cookies = extract_from_browser()
+        if fresh_cookies:
+            _save_cookie_cache(fresh_cookies)
+            # Verify fresh cookies — if this also fails, let it raise
+            verify_cookies(fresh_cookies["auth_token"], fresh_cookies["ct0"], fresh_cookies.get("cookie_string"))
+            return fresh_cookies
+        raise
     return cookies
 
 
+# ── Cookie file cache ───────────────────────────────────────────────────
+
+_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "twitter-cli")
+_CACHE_FILE = os.path.join(_CACHE_DIR, "cookies.json")
+_CACHE_TTL_SECONDS = 24 * 3600  # 24 hours
+
+
+def _load_cookie_cache():
+    # type: () -> Optional[Dict[str, str]]
+    """Load cookies from file cache if within TTL."""
+    try:
+        if not os.path.exists(_CACHE_FILE):
+            return None
+        import time as _time
+        mtime = os.path.getmtime(_CACHE_FILE)
+        if _time.time() - mtime > _CACHE_TTL_SECONDS:
+            logger.debug("Cookie cache expired (>%ds)", _CACHE_TTL_SECONDS)
+            return None
+        with open(_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and "auth_token" in data and "ct0" in data:
+            return data
+    except Exception as exc:
+        logger.debug("Failed to load cookie cache: %s", exc)
+    return None
+
+
+def _save_cookie_cache(cookies):
+    # type: (Dict[str, str]) -> None
+    """Save cookies to file cache."""
+    try:
+        os.makedirs(_CACHE_DIR, exist_ok=True)
+        with open(_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cookies, f, ensure_ascii=False)
+        # Restrict permissions — cookies are sensitive
+        os.chmod(_CACHE_FILE, 0o600)
+        logger.info("Saved cookies to cache (%s)", _CACHE_FILE)
+    except Exception as exc:
+        logger.debug("Failed to save cookie cache: %s", exc)
+
+
+def invalidate_cookie_cache():
+    # type: () -> None
+    """Delete the cookie cache file."""
+    try:
+        if os.path.exists(_CACHE_FILE):
+            os.remove(_CACHE_FILE)
+            logger.info("Cookie cache invalidated")
+    except Exception as exc:
+        logger.debug("Failed to invalidate cookie cache: %s", exc)

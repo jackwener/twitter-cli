@@ -28,6 +28,8 @@ import sys
 import time
 from pathlib import Path
 
+import json
+
 import click
 from rich.console import Console
 
@@ -43,7 +45,7 @@ from .formatter import (
     print_user_profile,
     print_user_table,
 )
-from .serialization import tweets_from_json, tweets_to_json, users_to_json
+from .serialization import tweets_from_json, tweets_to_json, user_profile_to_dict, users_to_json
 
 
 console = Console(stderr=True)
@@ -223,8 +225,9 @@ def favorites(max_count, as_json, output_file, do_filter):
 
 @cli.command()
 @click.argument("screen_name")
-def user(screen_name):
-    # type: (str,) -> None
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+def user(screen_name, as_json):
+    # type: (str, bool) -> None
     """View a user's profile. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
     config = load_config()
@@ -236,8 +239,11 @@ def user(screen_name):
         console.print("[red]❌ %s[/red]" % exc)
         sys.exit(1)
 
-    console.print()
-    print_user_profile(profile, console)
+    if as_json:
+        click.echo(json.dumps(user_profile_to_dict(profile), ensure_ascii=False, indent=2))
+    else:
+        console.print()
+        print_user_profile(profile, console)
 
 
 @cli.command("user-posts")
