@@ -731,7 +731,26 @@ class TwitterClient:
                     )
                     time.sleep(wait)
                     continue
+                # Write operation rate limits (retweet/like/bookmark limits)
+                # Code 348 = "retweet limit", 327 = "already retweeted"
+                # Provide user-friendly message
+                if err_code in (348, 349):
+                    raise TwitterAPIError(
+                        429, "Rate limited: %s (try again later, recommended wait: 15+ minutes)" % err_msg
+                    )
                 raise TwitterAPIError(0, "Twitter API returned errors: %s" % err_msg)
+
+            # GraphQL write mutations return errors in data.errors (separate from top-level)
+            if isinstance(parsed, dict) and "data" in parsed:
+                data_obj = parsed["data"]
+                if isinstance(data_obj, dict):
+                    for key, val in data_obj.items():
+                        if isinstance(val, dict) and val.get("errors"):
+                            inner_errors = val["errors"]
+                            if inner_errors:
+                                inner_msg = inner_errors[0].get("message", "Unknown error")
+                                raise TwitterAPIError(0, "Twitter API: %s" % inner_msg)
+
             return parsed
 
         # Should not be reached, but just in case
