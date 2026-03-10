@@ -50,6 +50,8 @@ class Tweet:
     retweeted_by: Optional[str] = None
     quoted_tweet: Optional[Tweet] = None
     score: Optional[float] = None
+    article_title: Optional[str] = None
+    article_text: Optional[str] = None
 
 
 @dataclass

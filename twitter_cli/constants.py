@@ -48,6 +48,18 @@ def get_sec_ch_ua():
     )
 
 
+def get_sec_ch_ua_full_version():
+    # type: () -> str
+    return '"%s.0.0.0"' % _chrome_version
+
+
+def get_sec_ch_ua_full_version_list():
+    # type: () -> str
+    return '"Google Chrome";v="%s.0.0.0", "Chromium";v="%s.0.0.0", "Not.A/Brand";v="99.0.0.0"' % (
+        _chrome_version, _chrome_version,
+    )
+
+
 def _get_locale_tag():
     # type: () -> str
     raw = (
@@ -86,6 +98,10 @@ def get_sec_ch_ua_platform():
 # Static Client Hints
 SEC_CH_UA_MOBILE = "?0"
 SEC_CH_UA_PLATFORM = get_sec_ch_ua_platform()
+SEC_CH_UA_ARCH = '"arm"' if sys.platform == "darwin" else '"x86"'
+SEC_CH_UA_BITNESS = '"64"'
+SEC_CH_UA_MODEL = '""'
+SEC_CH_UA_PLATFORM_VERSION = '"15.0.0"' if sys.platform == "darwin" else '"10.0.0"'
 
 # Legacy aliases — modules that import these get the default value.
 # _build_headers() should use get_user_agent() / get_sec_ch_ua() instead.

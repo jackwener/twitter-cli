@@ -17,9 +17,15 @@ from x_client_transaction.utils import generate_headers as _gen_ct_headers, get_
 
 from .constants import (
     BEARER_TOKEN,
+    SEC_CH_UA_ARCH,
+    SEC_CH_UA_BITNESS,
     SEC_CH_UA_MOBILE,
+    SEC_CH_UA_MODEL,
+    SEC_CH_UA_PLATFORM_VERSION,
     get_accept_language,
     get_sec_ch_ua,
+    get_sec_ch_ua_full_version,
+    get_sec_ch_ua_full_version_list,
     get_sec_ch_ua_platform,
     get_twitter_client_language,
     get_user_agent,
@@ -342,6 +348,17 @@ class TwitterClient:
 
         return self._fetch_timeline("Bookmarks", count, get_instructions)
 
+    def resolve_user_id(self, identifier):
+        # type: (str) -> str
+        """Resolve a user identifier (screen_name or numeric user_id) to numeric user_id.
+
+        If identifier is all digits, returns it as-is. Otherwise fetches the user profile.
+        """
+        if identifier.isdigit():
+            return identifier
+        profile = self.fetch_user(identifier)
+        return profile.id
+
     def fetch_user(self, screen_name):
         # type: (str) -> UserProfile
         """Fetch user profile by screen name."""
@@ -621,7 +638,7 @@ class TwitterClient:
         # type: (str) -> bool
         """Follow a user by user ID.  Returns True on success."""
         url = "https://x.com/i/api/1.1/friendships/create.json"
-        body = {"user_id": user_id}
+        body = {"user_id": user_id, "include_profile_interstitial_type": "1"}
         headers = self._build_headers(url=url, method="POST")
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         session = _get_cffi_session()
@@ -635,7 +652,7 @@ class TwitterClient:
         # type: (str) -> bool
         """Unfollow a user by user ID.  Returns True on success."""
         url = "https://x.com/i/api/1.1/friendships/destroy.json"
-        body = {"user_id": user_id}
+        body = {"user_id": user_id, "include_profile_interstitial_type": "1"}
         headers = self._build_headers(url=url, method="POST")
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         session = _get_cffi_session()
@@ -727,15 +744,74 @@ class TwitterClient:
                 return self._api_get(retry_url)
             raise RuntimeError(str(exc))
 
+    @staticmethod
+    def _ct_cache_path():
+        # type: () -> str
+        """Return path for transaction cache file."""
+        home = os.path.expanduser("~")
+        return os.path.join(home, ".twitter-cli", "transaction_cache.json")
+
+    def _load_ct_cache(self):
+        # type: () -> bool
+        """Try to load ClientTransaction from cache.  Returns True on success."""
+        try:
+            cache_path = self._ct_cache_path()
+            if not os.path.exists(cache_path):
+                return False
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+            # Check TTL (1 hour)
+            if time.time() - cache.get("created_at", 0) > 3600:
+                return False
+            home_html = cache.get("home_html", "")
+            ondemand_text = cache.get("ondemand_text", "")
+            if not home_html or not ondemand_text:
+                return False
+            home_page_response = bs4.BeautifulSoup(home_html, "html.parser")
+            self._client_transaction = ClientTransaction(
+                home_page_response=home_page_response,
+                ondemand_file_response=ondemand_text,
+            )
+            _update_features_from_html(home_html)
+            logger.info("ClientTransaction loaded from cache")
+            return True
+        except Exception as exc:
+            logger.debug("Failed to load CT cache: %s", exc)
+            return False
+
+    def _save_ct_cache(self, home_html, ondemand_text):
+        # type: (str, str) -> None
+        """Save transaction data to cache file."""
+        try:
+            cache_path = self._ct_cache_path()
+            cache_dir = os.path.dirname(cache_path)
+            os.makedirs(cache_dir, exist_ok=True)
+            cache = {
+                "home_html": home_html,
+                "ondemand_text": ondemand_text,
+                "created_at": time.time(),
+            }
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(cache, f)
+            logger.debug("Saved CT cache to %s", cache_path)
+        except Exception as exc:
+            logger.debug("Failed to save CT cache: %s", exc)
+
     def _ensure_client_transaction(self):
         # type: () -> None
         """Initialize ClientTransaction for x-client-transaction-id header.
 
+        Tries cache first (1h TTL), then fetches fresh data from x.com.
         Also attempts to extract live feature flags from JS bundles.
         """
         if self._ct_init_attempted:
             return
         self._ct_init_attempted = True
+
+        # Try loading from cache first
+        if self._load_ct_cache():
+            return
+
         try:
             # Use curl_cffi for ClientTransaction init to maintain consistent
             # Chrome TLS fingerprint. Using Python requests here would leak
@@ -758,6 +834,9 @@ class TwitterClient:
 
             # Try to extract live FEATURES from the homepage JS bundles
             _update_features_from_html(home_page.text)
+
+            # Save to cache for future use
+            self._save_ct_cache(home_page.text, ondemand_file.text)
         except Exception as exc:
             logger.warning("Failed to init ClientTransaction: %s", exc)
 
@@ -773,18 +852,26 @@ class TwitterClient:
             "X-Twitter-Client-Language": get_twitter_client_language(),
             "User-Agent": get_user_agent(),
             "Origin": "https://x.com",
-            "Referer": "https://x.com",
+            "Referer": "https://x.com/",
             "Accept": "*/*",
             "Accept-Language": get_accept_language(),
             "sec-ch-ua": get_sec_ch_ua(),
             "sec-ch-ua-mobile": SEC_CH_UA_MOBILE,
             "sec-ch-ua-platform": get_sec_ch_ua_platform(),
+            "sec-ch-ua-arch": SEC_CH_UA_ARCH,
+            "sec-ch-ua-bitness": SEC_CH_UA_BITNESS,
+            "sec-ch-ua-full-version": get_sec_ch_ua_full_version(),
+            "sec-ch-ua-full-version-list": get_sec_ch_ua_full_version_list(),
+            "sec-ch-ua-model": SEC_CH_UA_MODEL,
+            "sec-ch-ua-platform-version": SEC_CH_UA_PLATFORM_VERSION,
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
         }
         if method == "POST":
             headers["Content-Type"] = "application/json"
+            headers["Referer"] = "https://x.com/compose/post"
+            headers["Priority"] = "u=1, i"
         # Generate x-client-transaction-id if available
         if self._client_transaction and url:
             try:
@@ -1100,7 +1187,61 @@ class TwitterClient:
             retweeted_by=retweeted_by,
             quoted_tweet=quoted_tweet,
             lang=actual_legacy.get("lang", ""),
+            **_parse_article(actual_data),
         )
+
+
+def _parse_article(tweet_data):
+    # type: (Dict[str, Any]) -> Dict[str, Any]
+    """Extract Twitter Article data (long-form content) from a tweet.
+
+    Returns dict with 'article_title' and 'article_text' keys (None if not an article).
+    Converts draft.js content blocks to Markdown.
+    """
+    article_results = _deep_get(tweet_data, "article", "article_results", "result")
+    if not article_results:
+        return {"article_title": None, "article_text": None}
+
+    title = article_results.get("title")  # type: Optional[str]
+    content_state = article_results.get("content_state", {})
+    blocks = content_state.get("blocks", [])
+    if not blocks:
+        return {"article_title": title, "article_text": None}
+
+    # Convert draft.js blocks to Markdown
+    parts = []  # type: List[str]
+    ordered_counter = 0
+    for block in blocks:
+        block_type = block.get("type", "unstyled")  # type: str
+        if block_type == "atomic":
+            continue
+        text = block.get("text", "")  # type: str
+        if not text:
+            continue
+        if block_type != "ordered-list-item":
+            ordered_counter = 0
+        if block_type == "header-one":
+            parts.append("# %s" % text)
+        elif block_type == "header-two":
+            parts.append("## %s" % text)
+        elif block_type == "header-three":
+            parts.append("### %s" % text)
+        elif block_type == "blockquote":
+            parts.append("> %s" % text)
+        elif block_type == "unordered-list-item":
+            parts.append("- %s" % text)
+        elif block_type == "ordered-list-item":
+            ordered_counter += 1
+            parts.append("%d. %s" % (ordered_counter, text))
+        elif block_type == "code-block":
+            parts.append("```\n%s\n```" % text)
+        else:
+            parts.append(text)
+
+    return {
+        "article_title": title,
+        "article_text": "\n\n".join(parts) if parts else None,
+    }
 
 
 def _extract_media(legacy):

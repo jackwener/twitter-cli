@@ -27,7 +27,6 @@ Write commands:
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import sys
@@ -50,12 +49,14 @@ from .formatter import (
     print_user_profile,
     print_user_table,
 )
+from .output import default_structured_format, emit_structured, structured_output_options, use_rich_output
 from .serialization import (
     tweets_from_json,
+    tweets_to_data,
     tweets_to_compact_json,
     tweets_to_json,
     user_profile_to_dict,
-    users_to_json,
+    users_to_data,
 )
 
 
@@ -88,10 +89,11 @@ def _load_tweets_from_json(path):
         raise RuntimeError("Invalid tweet JSON file %s: %s" % (path, exc))
 
 
-def _get_client(config=None):
-    # type: (Optional[Dict[str, Any]]) -> TwitterClient
+def _get_client(config=None, quiet=False):
+    # type: (Optional[Dict[str, Any]], bool) -> TwitterClient
     """Create an authenticated API client."""
-    console.print("\n🔐 Getting Twitter cookies...")
+    if not quiet:
+        console.print("\n🔐 Getting Twitter cookies...")
     cookies = get_cookies()
     rate_limit_config = (config or {}).get("rateLimit")
     return TwitterClient(
@@ -100,6 +102,15 @@ def _get_client(config=None):
         rate_limit_config,
         cookie_string=cookies.get("cookie_string"),
     )
+
+
+def _get_client_for_output(config=None, quiet=False):
+    # type: (Optional[Dict[str, Any]], bool) -> TwitterClient
+    """Call _get_client while staying compatible with monkeypatched legacy signatures."""
+    try:
+        return _get_client(config, quiet=quiet)
+    except TypeError:
+        return _get_client(config)
 
 
 def _exit_with_error(exc):
@@ -155,16 +166,17 @@ def _normalize_tweet_id(value):
     return candidate
 
 
-def _apply_filter(tweets, do_filter, config):
-    # type: (List[Tweet], bool, dict) -> List[Tweet]
+def _apply_filter(tweets, do_filter, config, rich_output=True):
+    # type: (List[Tweet], bool, dict, bool) -> List[Tweet]
     """Optionally apply tweet filtering."""
     if not do_filter:
         return tweets
     filter_config = config.get("filter", {})
     original_count = len(tweets)
     filtered = filter_tweets(tweets, filter_config)
-    print_filter_stats(original_count, filtered, console)
-    console.print()
+    if rich_output:
+        print_filter_stats(original_count, filtered, console)
+        console.print()
     return filtered
 
 
@@ -181,41 +193,44 @@ def cli(ctx, verbose, compact):
     ctx.obj["compact"] = compact
 
 
-def _fetch_and_display(fetch_fn, label, emoji, max_count, as_json, output_file, do_filter, config=None, compact=False):
-    # type: (Any, str, str, Optional[int], bool, Optional[str], bool, Optional[dict], bool) -> None
+def _fetch_and_display(fetch_fn, label, emoji, max_count, as_json, as_yaml, output_file, do_filter, config=None, compact=False):
+    # type: (Any, str, str, Optional[int], bool, bool, Optional[str], bool, Optional[dict], bool) -> None
     """Common fetch-filter-display logic for timeline-like commands."""
     if config is None:
         config = load_config()
+    rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
     try:
         fetch_count = _resolve_configured_count(config, max_count)
-        console.print("%s Fetching %s (%d tweets)...\n" % (emoji, label, fetch_count))
+        if rich_output:
+            console.print("%s Fetching %s (%d tweets)...\n" % (emoji, label, fetch_count))
         start = time.time()
         tweets = fetch_fn(fetch_count)
         elapsed = time.time() - start
-        console.print("✅ Fetched %d %s in %.1fs\n" % (len(tweets), label, elapsed))
+        if rich_output:
+            console.print("✅ Fetched %d %s in %.1fs\n" % (len(tweets), label, elapsed))
     except RuntimeError as exc:
         _exit_with_error(exc)
 
-    filtered = _apply_filter(tweets, do_filter, config)
+    filtered = _apply_filter(tweets, do_filter, config, rich_output=rich_output)
 
     if output_file:
         Path(output_file).write_text(tweets_to_json(filtered), encoding="utf-8")
-        console.print("💾 Saved to %s\n" % output_file)
+        if rich_output:
+            console.print("💾 Saved to %s\n" % output_file)
 
     if compact:
         click.echo(tweets_to_compact_json(filtered))
         return
 
-    if as_json:
-        click.echo(tweets_to_json(filtered))
+    if emit_structured(tweets_to_data(filtered), as_json=as_json, as_yaml=as_yaml):
         return
 
     print_tweet_table(filtered, console, title="%s %s — %d tweets" % (emoji, label, len(filtered)))
     console.print()
 
 
-def _run_bookmarks_command(max_count, as_json, output_file, do_filter, compact=False):
-    # type: (Optional[int], bool, Optional[str], bool, bool) -> None
+def _run_bookmarks_command(max_count, as_json, as_yaml, output_file, do_filter, compact=False):
+    # type: (Optional[int], bool, bool, Optional[str], bool, bool) -> None
     config = load_config()
 
     def _run():
@@ -226,6 +241,7 @@ def _run_bookmarks_command(max_count, as_json, output_file, do_filter, compact=F
             "🔖",
             max_count,
             as_json,
+            as_yaml,
             output_file,
             do_filter,
             config,
@@ -245,48 +261,53 @@ def _run_bookmarks_command(max_count, as_json, output_file, do_filter, compact=F
     help="Feed type: for-you (algorithmic) or following (chronological).",
 )
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max number of tweets to fetch.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@structured_output_options
 @click.option("--input", "-i", "input_file", type=str, default=None, help="Load tweets from JSON file.")
 @click.option("--output", "-o", "output_file", type=str, default=None, help="Save filtered tweets to JSON file.")
 @click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
 @click.pass_context
-def feed(ctx, feed_type, max_count, as_json, input_file, output_file, do_filter):
-    # type: (Any, str, Optional[int], bool, Optional[str], Optional[str], bool) -> None
+def feed(ctx, feed_type, max_count, as_json, as_yaml, input_file, output_file, do_filter):
+    # type: (Any, str, Optional[int], bool, bool, Optional[str], Optional[str], bool) -> None
     """Fetch home timeline with optional filtering."""
     compact = ctx.obj.get("compact", False)
+    rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
     config = load_config()
     try:
         if input_file:
-            console.print("📂 Loading tweets from %s..." % input_file)
+            if rich_output:
+                console.print("📂 Loading tweets from %s..." % input_file)
             tweets = _load_tweets_from_json(input_file)
-            console.print("   Loaded %d tweets" % len(tweets))
+            if rich_output:
+                console.print("   Loaded %d tweets" % len(tweets))
         else:
             fetch_count = _resolve_configured_count(config, max_count)
-            client = _get_client(config)
+            client = _get_client_for_output(config, quiet=not rich_output)
             label = "following feed" if feed_type == "following" else "home timeline"
-            console.print("📡 Fetching %s (%d tweets)...\n" % (label, fetch_count))
+            if rich_output:
+                console.print("📡 Fetching %s (%d tweets)...\n" % (label, fetch_count))
             start = time.time()
             if feed_type == "following":
                 tweets = client.fetch_following_feed(fetch_count)
             else:
                 tweets = client.fetch_home_timeline(fetch_count)
             elapsed = time.time() - start
-            console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
+            if rich_output:
+                console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
     except RuntimeError as exc:
         _exit_with_error(exc)
 
-    filtered = _apply_filter(tweets, do_filter, config)
+    filtered = _apply_filter(tweets, do_filter, config, rich_output=rich_output)
 
     if output_file:
         Path(output_file).write_text(tweets_to_json(filtered), encoding="utf-8")
-        console.print("💾 Saved filtered tweets to %s\n" % output_file)
+        if rich_output:
+            console.print("💾 Saved filtered tweets to %s\n" % output_file)
 
     if compact:
         click.echo(tweets_to_compact_json(filtered))
         return
 
-    if as_json:
-        click.echo(tweets_to_json(filtered))
+    if emit_structured(tweets_to_data(filtered), as_json=as_json, as_yaml=as_yaml):
         return
 
     title = "👥 Following" if feed_type == "following" else "📱 Twitter"
@@ -297,46 +318,46 @@ def feed(ctx, feed_type, max_count, as_json, input_file, output_file, do_filter)
 
 @cli.command()
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max number of tweets to fetch.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@structured_output_options
 @click.option("--output", "-o", "output_file", type=str, default=None, help="Save tweets to JSON file.")
 @click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
 @click.pass_context
-def favorites(ctx, max_count, as_json, output_file, do_filter):
-    # type: (Any, Optional[int], bool, Optional[str], bool) -> None
+def favorites(ctx, max_count, as_json, as_yaml, output_file, do_filter):
+    # type: (Any, Optional[int], bool, bool, Optional[str], bool) -> None
     """Fetch bookmarked (favorite) tweets."""
-    _run_bookmarks_command(max_count, as_json, output_file, do_filter, compact=ctx.obj.get("compact", False))
+    _run_bookmarks_command(max_count, as_json, as_yaml, output_file, do_filter, compact=ctx.obj.get("compact", False))
 
 
 @cli.command(name="bookmarks")
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max number of tweets to fetch.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@structured_output_options
 @click.option("--output", "-o", "output_file", type=str, default=None, help="Save tweets to JSON file.")
 @click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
 @click.pass_context
-def bookmarks(ctx, max_count, as_json, output_file, do_filter):
-    # type: (Any, Optional[int], bool, Optional[str], bool) -> None
+def bookmarks(ctx, max_count, as_json, as_yaml, output_file, do_filter):
+    # type: (Any, Optional[int], bool, bool, Optional[str], bool) -> None
     """Fetch bookmarked tweets."""
-    _run_bookmarks_command(max_count, as_json, output_file, do_filter, compact=ctx.obj.get("compact", False))
+    _run_bookmarks_command(max_count, as_json, as_yaml, output_file, do_filter, compact=ctx.obj.get("compact", False))
 
 
 @cli.command()
 @click.argument("screen_name")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-def user(screen_name, as_json):
-    # type: (str, bool) -> None
+@structured_output_options
+def user(screen_name, as_json, as_yaml):
+    # type: (str, bool, bool) -> None
     """View a user's profile. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
     config = load_config()
     try:
-        client = _get_client(config)
-        console.print("👤 Fetching user @%s..." % screen_name)
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
+        client = _get_client_for_output(config, quiet=not rich_output)
+        if rich_output:
+            console.print("👤 Fetching user @%s..." % screen_name)
         profile = client.fetch_user(screen_name)
     except RuntimeError as exc:
         _exit_with_error(exc)
 
-    if as_json:
-        click.echo(json.dumps(user_profile_to_dict(profile), ensure_ascii=False, indent=2))
-    else:
+    if not emit_structured(user_profile_to_dict(profile), as_json=as_json, as_yaml=as_yaml):
         console.print()
         print_user_profile(profile, console)
 
@@ -344,22 +365,24 @@ def user(screen_name, as_json):
 @cli.command("user-posts")
 @click.argument("screen_name")
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max number of tweets to fetch.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@structured_output_options
 @click.option("--output", "-o", "output_file", type=str, default=None, help="Save tweets to JSON file.")
 @click.pass_context
-def user_posts(ctx, screen_name, max_count, as_json, output_file):
-    # type: (Any, str, int, bool, Optional[str]) -> None
+def user_posts(ctx, screen_name, max_count, as_json, as_yaml, output_file):
+    # type: (Any, str, int, bool, bool, Optional[str]) -> None
     """List a user's tweets. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
     compact = ctx.obj.get("compact", False)
     config = load_config()
     def _run():
-        client = _get_client(config)
-        console.print("👤 Fetching @%s's profile..." % screen_name)
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
+        client = _get_client_for_output(config, quiet=not rich_output)
+        if rich_output:
+            console.print("👤 Fetching @%s's profile..." % screen_name)
         profile = client.fetch_user(screen_name)
         _fetch_and_display(
             lambda count: client.fetch_user_tweets(profile.id, count),
-            "@%s tweets" % screen_name, "📝", max_count, as_json, output_file, False, config,
+            "@%s tweets" % screen_name, "📝", max_count, as_json, as_yaml, output_file, False, config,
             compact=compact,
         )
     _run_guarded(_run)
@@ -376,20 +399,21 @@ def user_posts(ctx, screen_name, max_count, as_json, output_file):
     help="Search tab: Top, Latest, Photos, or Videos.",
 )
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max number of tweets to fetch.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@structured_output_options
 @click.option("--output", "-o", "output_file", type=str, default=None, help="Save tweets to JSON file.")
 @click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
 @click.pass_context
-def search(ctx, query, product, max_count, as_json, output_file, do_filter):
-    # type: (Any, str, str, int, bool, Optional[str], bool) -> None
+def search(ctx, query, product, max_count, as_json, as_yaml, output_file, do_filter):
+    # type: (Any, str, str, int, bool, bool, Optional[str], bool) -> None
     """Search tweets by QUERY string."""
     compact = ctx.obj.get("compact", False)
     config = load_config()
     def _run():
-        client = _get_client(config)
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
+        client = _get_client_for_output(config, quiet=not rich_output)
         _fetch_and_display(
             lambda count: client.fetch_search(query, count, product),
-            "'%s' (%s)" % (query, product), "🔍", max_count, as_json, output_file, do_filter, config,
+            "'%s' (%s)" % (query, product), "🔍", max_count, as_json, as_yaml, output_file, do_filter, config,
             compact=compact,
         )
     _run_guarded(_run)
@@ -398,23 +422,25 @@ def search(ctx, query, product, max_count, as_json, output_file, do_filter):
 @cli.command()
 @click.argument("screen_name")
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max number of tweets to fetch.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@structured_output_options
 @click.option("--output", "-o", "output_file", type=str, default=None, help="Save tweets to JSON file.")
 @click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
 @click.pass_context
-def likes(ctx, screen_name, max_count, as_json, output_file, do_filter):
-    # type: (Any, str, int, bool, Optional[str], bool) -> None
+def likes(ctx, screen_name, max_count, as_json, as_yaml, output_file, do_filter):
+    # type: (Any, str, int, bool, bool, Optional[str], bool) -> None
     """Show tweets liked by a user. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
     compact = ctx.obj.get("compact", False)
     config = load_config()
     def _run():
-        client = _get_client(config)
-        console.print("👤 Fetching @%s's profile..." % screen_name)
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
+        client = _get_client_for_output(config, quiet=not rich_output)
+        if rich_output:
+            console.print("👤 Fetching @%s's profile..." % screen_name)
         profile = client.fetch_user(screen_name)
         _fetch_and_display(
             lambda count: client.fetch_user_likes(profile.id, count),
-            "@%s likes" % screen_name, "❤️", max_count, as_json, output_file, do_filter, config,
+            "@%s likes" % screen_name, "❤️", max_count, as_json, as_yaml, output_file, do_filter, config,
             compact=compact,
         )
     _run_guarded(_run)
@@ -423,21 +449,24 @@ def likes(ctx, screen_name, max_count, as_json, output_file, do_filter):
 @cli.command()
 @click.argument("tweet_id")
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max replies to fetch.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@structured_output_options
 @click.pass_context
-def tweet(ctx, tweet_id, max_count, as_json):
-    # type: (Any, str, int, bool) -> None
+def tweet(ctx, tweet_id, max_count, as_json, as_yaml):
+    # type: (Any, str, int, bool, bool) -> None
     """View a tweet and its replies. TWEET_ID is the numeric tweet ID or full URL."""
     compact = ctx.obj.get("compact", False)
     tweet_id = _normalize_tweet_id(tweet_id)
     config = load_config()
+    rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
     try:
-        client = _get_client(config)
-        console.print("🐦 Fetching tweet %s...\n" % tweet_id)
+        client = _get_client_for_output(config, quiet=not rich_output)
+        if rich_output:
+            console.print("🐦 Fetching tweet %s...\n" % tweet_id)
         start = time.time()
         tweets = client.fetch_tweet_detail(tweet_id, _resolve_configured_count(config, max_count))
         elapsed = time.time() - start
-        console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
+        if rich_output:
+            console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
     except RuntimeError as exc:
         _exit_with_error(exc)
 
@@ -445,8 +474,7 @@ def tweet(ctx, tweet_id, max_count, as_json):
         click.echo(tweets_to_compact_json(tweets))
         return
 
-    if as_json:
-        click.echo(tweets_to_json(tweets))
+    if emit_structured(tweets_to_data(tweets), as_json=as_json, as_yaml=as_yaml):
         return
 
     if tweets:
@@ -460,11 +488,11 @@ def tweet(ctx, tweet_id, max_count, as_json):
 @cli.command(name="list")
 @click.argument("list_id")
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max tweets to fetch.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@structured_output_options
 @click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
 @click.pass_context
-def list_timeline(ctx, list_id, max_count, as_json, do_filter):
-    # type: (Any, str, int, bool, bool) -> None
+def list_timeline(ctx, list_id, max_count, as_json, as_yaml, do_filter):
+    # type: (Any, str, int, bool, bool, bool) -> None
     """Fetch tweets from a Twitter List. LIST_ID is the numeric list ID."""
     compact = ctx.obj.get("compact", False)
     config = load_config()
@@ -472,7 +500,7 @@ def list_timeline(ctx, list_id, max_count, as_json, do_filter):
         client = _get_client(config)
         _fetch_and_display(
             lambda count: client.fetch_list_timeline(list_id, count),
-            "list %s" % list_id, "📋", max_count, as_json, None, do_filter, config,
+            "list %s" % list_id, "📋", max_count, as_json, as_yaml, None, do_filter, config,
             compact=compact,
         )
     _run_guarded(_run)
@@ -481,27 +509,30 @@ def list_timeline(ctx, list_id, max_count, as_json, do_filter):
 @cli.command()
 @click.argument("screen_name")
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max users to fetch.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-def followers(screen_name, max_count, as_json):
-    # type: (str, int, bool) -> None
+@structured_output_options
+def followers(screen_name, max_count, as_json, as_yaml):
+    # type: (str, int, bool, bool) -> None
     """List followers of a user. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
     config = load_config()
     try:
-        client = _get_client(config)
-        console.print("👤 Fetching @%s's profile..." % screen_name)
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
+        client = _get_client_for_output(config, quiet=not rich_output)
+        if rich_output:
+            console.print("👤 Fetching @%s's profile..." % screen_name)
         profile = client.fetch_user(screen_name)
         fetch_count = _resolve_configured_count(config, max_count)
-        console.print("👥 Fetching followers (%d)...\n" % fetch_count)
+        if rich_output:
+            console.print("👥 Fetching followers (%d)...\n" % fetch_count)
         start = time.time()
         users = client.fetch_followers(profile.id, fetch_count)
         elapsed = time.time() - start
-        console.print("✅ Fetched %d followers in %.1fs\n" % (len(users), elapsed))
+        if rich_output:
+            console.print("✅ Fetched %d followers in %.1fs\n" % (len(users), elapsed))
     except RuntimeError as exc:
         _exit_with_error(exc)
 
-    if as_json:
-        click.echo(users_to_json(users))
+    if emit_structured(users_to_data(users), as_json=as_json, as_yaml=as_yaml):
         return
 
     print_user_table(users, console, title="👥 @%s followers — %d" % (screen_name, len(users)))
@@ -511,27 +542,30 @@ def followers(screen_name, max_count, as_json):
 @cli.command()
 @click.argument("screen_name")
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max users to fetch.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-def following(screen_name, max_count, as_json):
-    # type: (str, int, bool) -> None
+@structured_output_options
+def following(screen_name, max_count, as_json, as_yaml):
+    # type: (str, int, bool, bool) -> None
     """List accounts a user is following. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
     config = load_config()
     try:
-        client = _get_client(config)
-        console.print("👤 Fetching @%s's profile..." % screen_name)
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
+        client = _get_client_for_output(config, quiet=not rich_output)
+        if rich_output:
+            console.print("👤 Fetching @%s's profile..." % screen_name)
         profile = client.fetch_user(screen_name)
         fetch_count = _resolve_configured_count(config, max_count)
-        console.print("👥 Fetching following (%d)...\n" % fetch_count)
+        if rich_output:
+            console.print("👥 Fetching following (%d)...\n" % fetch_count)
         start = time.time()
         users = client.fetch_following(profile.id, fetch_count)
         elapsed = time.time() - start
-        console.print("✅ Fetched %d following in %.1fs\n" % (len(users), elapsed))
+        if rich_output:
+            console.print("✅ Fetched %d following in %.1fs\n" % (len(users), elapsed))
     except RuntimeError as exc:
         _exit_with_error(exc)
 
-    if as_json:
-        click.echo(users_to_json(users))
+    if emit_structured(users_to_data(users), as_json=as_json, as_yaml=as_yaml):
         return
 
     print_user_table(users, console, title="👥 @%s following — %d" % (screen_name, len(users)))
@@ -542,14 +576,28 @@ def following(screen_name, max_count, as_json):
 
 def _write_action(emoji, action_desc, client_method, tweet_id):
     # type: (str, str, str, str) -> None
-    """Generic write action helper to reduce CLI command boilerplate."""
+    """Generic write action helper to reduce CLI command boilerplate.
+
+    Emits structured JSON/YAML when piped or when OUTPUT env is set.
+    """
     try:
         config = load_config()
         client = _get_client(config)
-        console.print("%s %s %s..." % (emoji, action_desc, tweet_id))
+        structured = default_structured_format(as_json=False, as_yaml=False)
+        if not structured:
+            console.print("%s %s %s..." % (emoji, action_desc, tweet_id))
         getattr(client, client_method)(tweet_id)
-        console.print("[green]✅ Done.[/green]")
+        result = {"success": True, "action": action_desc.lower().replace(" ", "_"), "id": tweet_id}
+        if structured:
+            emit_structured(result, as_json=(structured == "json"), as_yaml=(structured == "yaml"))
+        else:
+            console.print("[green]✅ Done.[/green]")
     except RuntimeError as exc:
+        result = {"success": False, "action": action_desc.lower().replace(" ", "_"), "id": tweet_id, "error": str(exc)}
+        structured = default_structured_format(as_json=False, as_yaml=False)
+        if structured:
+            emit_structured(result, as_json=(structured == "json"), as_yaml=(structured == "yaml"))
+            sys.exit(1)
         _exit_with_error(exc)
 
 
@@ -562,11 +610,17 @@ def post(text, reply_to):
     config = load_config()
     try:
         client = _get_client(config)
-        action = "Replying to %s" % reply_to if reply_to else "Posting tweet"
-        console.print("✏️  %s..." % action)
+        structured = default_structured_format(as_json=False, as_yaml=False)
+        if not structured:
+            action = "Replying to %s" % reply_to if reply_to else "Posting tweet"
+            console.print("✏️  %s..." % action)
         tweet_id = client.create_tweet(text, reply_to_id=reply_to)
-        console.print("[green]✅ Tweet posted![/green]")
-        console.print("🔗 https://x.com/i/status/%s" % tweet_id)
+        result = {"success": True, "action": "post", "id": tweet_id, "url": "https://x.com/i/status/%s" % tweet_id}
+        if structured:
+            emit_structured(result, as_json=(structured == "json"), as_yaml=(structured == "yaml"))
+        else:
+            console.print("[green]✅ Tweet posted![/green]")
+            console.print("🔗 https://x.com/i/status/%s" % tweet_id)
     except RuntimeError as exc:
         _exit_with_error(exc)
 
@@ -581,10 +635,16 @@ def reply_tweet(tweet_id, text):
     config = load_config()
     try:
         client = _get_client(config)
-        console.print("💬 Replying to %s..." % tweet_id)
+        structured = default_structured_format(as_json=False, as_yaml=False)
+        if not structured:
+            console.print("💬 Replying to %s..." % tweet_id)
         new_id = client.create_tweet(text, reply_to_id=tweet_id)
-        console.print("[green]✅ Reply posted![/green]")
-        console.print("🔗 https://x.com/i/status/%s" % new_id)
+        result = {"success": True, "action": "reply", "id": new_id, "replyTo": tweet_id, "url": "https://x.com/i/status/%s" % new_id}
+        if structured:
+            emit_structured(result, as_json=(structured == "json"), as_yaml=(structured == "yaml"))
+        else:
+            console.print("[green]✅ Reply posted![/green]")
+            console.print("🔗 https://x.com/i/status/%s" % new_id)
     except RuntimeError as exc:
         _exit_with_error(exc)
 
@@ -599,30 +659,61 @@ def quote_tweet(tweet_id, text):
     config = load_config()
     try:
         client = _get_client(config)
-        console.print("🔄 Quoting tweet %s..." % tweet_id)
+        structured = default_structured_format(as_json=False, as_yaml=False)
+        if not structured:
+            console.print("🔄 Quoting tweet %s..." % tweet_id)
         new_id = client.quote_tweet(tweet_id, text)
-        console.print("[green]✅ Quote tweet posted![/green]")
-        console.print("🔗 https://x.com/i/status/%s" % new_id)
+        result = {"success": True, "action": "quote", "id": new_id, "quotedId": tweet_id, "url": "https://x.com/i/status/%s" % new_id}
+        if structured:
+            emit_structured(result, as_json=(structured == "json"), as_yaml=(structured == "yaml"))
+        else:
+            console.print("[green]✅ Quote tweet posted![/green]")
+            console.print("🔗 https://x.com/i/status/%s" % new_id)
     except RuntimeError as exc:
         _exit_with_error(exc)
 
 
+@cli.command(name="status")
+@structured_output_options
+def status(as_json, as_yaml):
+    # type: (bool, bool) -> None
+    """Check whether the current Twitter/X session is authenticated."""
+    config = load_config()
+    try:
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
+        client = _get_client_for_output(config, quiet=not rich_output)
+        profile = client.fetch_me()
+    except RuntimeError as exc:
+        payload = {"authenticated": False, "error": str(exc)}
+        if emit_structured(payload, as_json=as_json, as_yaml=as_yaml):
+            sys.exit(1)
+        _exit_with_error(exc)
+        return
+
+    payload = {"authenticated": True, "user": user_profile_to_dict(profile)}
+    if emit_structured(payload, as_json=as_json, as_yaml=as_yaml):
+        return
+
+    console.print("[green]✅ Authenticated.[/green]")
+    console.print("👤 @%s" % profile.screen_name)
+
+
 @cli.command(name="whoami")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-def whoami(as_json):
-    # type: (bool,) -> None
+@structured_output_options
+def whoami(as_json, as_yaml):
+    # type: (bool, bool) -> None
     """Show the currently authenticated user's profile."""
     config = load_config()
     try:
-        client = _get_client(config)
-        console.print("👤 Fetching current user...")
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
+        client = _get_client_for_output(config, quiet=not rich_output)
+        if rich_output:
+            console.print("👤 Fetching current user...")
         profile = client.fetch_me()
     except RuntimeError as exc:
         _exit_with_error(exc)
 
-    if as_json:
-        click.echo(json.dumps(user_profile_to_dict(profile), ensure_ascii=False, indent=2))
-    else:
+    if not emit_structured(user_profile_to_dict(profile), as_json=as_json, as_yaml=as_yaml):
         console.print()
         print_user_profile(profile, console)
 
@@ -636,11 +727,18 @@ def follow_user(screen_name):
     config = load_config()
     try:
         client = _get_client(config)
-        console.print("👤 Looking up @%s..." % screen_name)
-        profile = client.fetch_user(screen_name)
-        console.print("➕ Following @%s..." % screen_name)
-        client.follow_user(profile.id)
-        console.print("[green]✅ Now following @%s[/green]" % screen_name)
+        structured = default_structured_format(as_json=False, as_yaml=False)
+        if not structured:
+            console.print("👤 Looking up @%s..." % screen_name)
+        user_id = client.resolve_user_id(screen_name)
+        if not structured:
+            console.print("➕ Following @%s..." % screen_name)
+        client.follow_user(user_id)
+        result = {"success": True, "action": "follow", "screenName": screen_name, "userId": user_id}
+        if structured:
+            emit_structured(result, as_json=(structured == "json"), as_yaml=(structured == "yaml"))
+        else:
+            console.print("[green]✅ Now following @%s[/green]" % screen_name)
     except RuntimeError as exc:
         _exit_with_error(exc)
 
@@ -654,11 +752,18 @@ def unfollow_user(screen_name):
     config = load_config()
     try:
         client = _get_client(config)
-        console.print("👤 Looking up @%s..." % screen_name)
-        profile = client.fetch_user(screen_name)
-        console.print("➖ Unfollowing @%s..." % screen_name)
-        client.unfollow_user(profile.id)
-        console.print("[green]✅ Unfollowed @%s[/green]" % screen_name)
+        structured = default_structured_format(as_json=False, as_yaml=False)
+        if not structured:
+            console.print("👤 Looking up @%s..." % screen_name)
+        user_id = client.resolve_user_id(screen_name)
+        if not structured:
+            console.print("➖ Unfollowing @%s..." % screen_name)
+        client.unfollow_user(user_id)
+        result = {"success": True, "action": "unfollow", "screenName": screen_name, "userId": user_id}
+        if structured:
+            emit_structured(result, as_json=(structured == "json"), as_yaml=(structured == "yaml"))
+        else:
+            console.print("[green]✅ Unfollowed @%s[/green]" % screen_name)
     except RuntimeError as exc:
         _exit_with_error(exc)
 

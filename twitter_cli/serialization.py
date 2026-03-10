@@ -44,6 +44,10 @@ def tweet_to_dict(tweet: Tweet) -> Dict[str, Any]:
         "lang": tweet.lang,
         "score": tweet.score,
     }
+    if tweet.article_title is not None:
+        data["articleTitle"] = tweet.article_title
+    if tweet.article_text is not None:
+        data["articleText"] = tweet.article_text
     if tweet.quoted_tweet:
         data["quotedTweet"] = {
             "id": tweet.quoted_tweet.id,
@@ -113,6 +117,8 @@ def tweet_from_dict(data: Dict[str, Any]) -> Tweet:
         retweeted_by=_optional_str(data.get("retweetedBy")),
         quoted_tweet=quoted_tweet,
         score=float(data["score"]) if data.get("score") is not None else None,
+        article_title=_optional_str(data.get("articleTitle")),
+        article_text=_optional_str(data.get("articleText")),
     )
 
 
@@ -127,6 +133,11 @@ def tweets_from_json(raw: str) -> List[Tweet]:
 def tweets_to_json(tweets: Iterable[Tweet]) -> str:
     """Serialize Tweet objects to pretty JSON."""
     return json.dumps([tweet_to_dict(tweet) for tweet in tweets], ensure_ascii=False, indent=2)
+
+
+def tweets_to_data(tweets: Iterable[Tweet]) -> List[Dict[str, Any]]:
+    """Serialize Tweet objects to Python dicts."""
+    return [tweet_to_dict(tweet) for tweet in tweets]
 
 
 def tweet_to_compact_dict(tweet: Tweet) -> Dict[str, Any]:
@@ -185,6 +196,11 @@ def users_to_json(users: Iterable[UserProfile]) -> str:
         ensure_ascii=False,
         indent=2,
     )
+
+
+def users_to_data(users: Iterable[UserProfile]) -> List[Dict[str, Any]]:
+    """Serialize UserProfile objects to Python dicts."""
+    return [user_profile_to_dict(user) for user in users]
 
 
 def _optional_int(value: Any) -> Optional[int]:

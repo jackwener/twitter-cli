@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from click.testing import CliRunner
 import pytest
+import yaml
 
 from twitter_cli.cli import cli
 from twitter_cli.models import UserProfile
@@ -108,6 +109,39 @@ def test_cli_whoami_command(monkeypatch) -> None:
     assert '"screenName": "testuser"' in result_json.output
 
 
+def test_cli_whoami_auto_yaml(monkeypatch) -> None:
+    class FakeClient:
+        def fetch_me(self) -> UserProfile:
+            return UserProfile(id="42", name="Test User", screen_name="testuser")
+
+    monkeypatch.setenv("OUTPUT", "auto")
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None: FakeClient())
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["whoami"])
+
+    assert result.exit_code == 0
+    payload = yaml.safe_load(result.output)
+    assert payload["screenName"] == "testuser"
+
+
+def test_cli_status_auto_yaml(monkeypatch) -> None:
+    class FakeClient:
+        def fetch_me(self) -> UserProfile:
+            return UserProfile(id="42", name="Test User", screen_name="testuser")
+
+    monkeypatch.setenv("OUTPUT", "auto")
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None: FakeClient())
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["status"])
+
+    assert result.exit_code == 0
+    payload = yaml.safe_load(result.output)
+    assert payload["authenticated"] is True
+    assert payload["user"]["screenName"] == "testuser"
+
+
 def test_cli_reply_command(monkeypatch) -> None:
     calls = []
 
@@ -143,12 +177,11 @@ def test_cli_quote_command(monkeypatch) -> None:
 
 
 def test_cli_follow_command(monkeypatch) -> None:
-    from twitter_cli.models import UserProfile
     actions = []
 
     class FakeClient:
-        def fetch_user(self, screen_name: str) -> UserProfile:
-            return UserProfile(id="42", name="Alice", screen_name=screen_name)
+        def resolve_user_id(self, identifier: str) -> str:
+            return "42"
 
         def follow_user(self, user_id: str) -> bool:
             actions.append(("follow", user_id))
@@ -163,12 +196,11 @@ def test_cli_follow_command(monkeypatch) -> None:
 
 
 def test_cli_unfollow_command(monkeypatch) -> None:
-    from twitter_cli.models import UserProfile
     actions = []
 
     class FakeClient:
-        def fetch_user(self, screen_name: str) -> UserProfile:
-            return UserProfile(id="42", name="Alice", screen_name=screen_name)
+        def resolve_user_id(self, identifier: str) -> str:
+            return "42"
 
         def unfollow_user(self, user_id: str) -> bool:
             actions.append(("unfollow", user_id))
@@ -193,4 +225,3 @@ def test_cli_compact_mode(tmp_path, tweet_factory) -> None:
     assert '"@alice"' in result.output
     # Compact output should NOT have full metrics keys
     assert '"metrics"' not in result.output
-

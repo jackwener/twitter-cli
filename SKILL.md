@@ -33,7 +33,7 @@ uv tool install twitter-cli
 ### Step 0: Check if already authenticated
 
 ```bash
-twitter whoami --json 2>/dev/null && echo "AUTH_OK" || echo "AUTH_NEEDED"
+twitter status --yaml >/dev/null && echo "AUTH_OK" || echo "AUTH_NEEDED"
 ```
 
 If `AUTH_OK`, skip to [Command Reference](#command-reference).
@@ -97,9 +97,12 @@ twitter whoami
 twitter feed                          # Pretty table output
 ```
 
-### JSON: `--json` flag (agent-readable)
+### YAML / JSON: structured output
+
+Non-TTY stdout defaults to YAML automatically. Use `OUTPUT=yaml|json|rich|auto` to override.
 
 ```bash
+twitter feed --yaml
 twitter feed --json | jq '.[0].text'
 ```
 
@@ -121,7 +124,10 @@ twitter -c search "AI" --max 20       # ~80% fewer tokens than --json
 ### Read Operations
 
 ```bash
+twitter status                         # Quick auth check
+twitter status --yaml                  # Structured auth status
 twitter whoami                         # Current authenticated user
+twitter whoami --yaml                  # YAML output
 twitter whoami --json                  # JSON output
 twitter user elonmusk                  # User profile
 twitter user elonmusk --json           # JSON output
@@ -129,10 +135,10 @@ twitter feed                           # Home timeline (For You)
 twitter feed -t following              # Following timeline
 twitter feed --max 50                  # Limit count
 twitter feed --filter                  # Enable ranking filter
-twitter feed --json > tweets.json      # Export as JSON
+twitter feed --yaml > tweets.yaml      # Export as YAML
 twitter feed --input tweets.json       # Read from local JSON file
 twitter bookmarks                      # Bookmarked tweets
-twitter bookmarks --max 30 --json
+twitter bookmarks --max 30 --yaml
 twitter search "keyword"               # Search tweets
 twitter search "AI agent" -t Latest --max 50
 twitter search "topic" -o results.json # Save to file
