@@ -51,11 +51,14 @@ jobs:
           fi
 
           clawhub --no-input login --token "${CLAWHUB_TOKEN}" --no-browser
+          export VERSION
 
           # Workaround: clawhub@0.7.0 publish doesn't send acceptLicenseTerms,
           # which the server now requires. Use a Node.js script to publish with
           # the corrected payload.
-          node - <<'PUBLISH_SCRIPT'
+          # Note: NODE_TLS_REJECT_UNAUTHORIZED=0 is needed because api.clawhub.io
+          # has an expired SSL certificate. Remove once ClawHub renews their cert.
+          NODE_TLS_REJECT_UNAUTHORIZED=0 node - <<'PUBLISH_SCRIPT'
           const { resolve } = require("path");
           const { readFileSync, statSync, readdirSync } = require("fs");
           const folder = resolve(".");
@@ -105,15 +108,20 @@ jobs:
           } catch {}
           if (!token) { console.error("No token found"); process.exit(1); }
 
-          const registry = "https://api.clawhub.io";
+          const registry = "https://clawhub.ai";
           fetch(registry + "/api/v1/skills", {
             method: "POST",
             headers: { Authorization: "Bearer " + token },
             body: form,
-          }).then(async r => {
+          }).then(async (r) => {
             const text = await r.text();
-            if (!r.ok) { console.error("Publish failed:", r.status, text); process.exit(1); }
+            if (!r.ok) {
+              console.error("Publish failed:", r.status, text);
+              process.exit(1);
+            }
             console.log("✔ Published", slug + "@" + version);
-          }).catch(e => { console.error(e); process.exit(1); });
+          }).catch((e) => {
+            console.error(e);
+            process.exit(1);
+          });
           PUBLISH_SCRIPT
-
