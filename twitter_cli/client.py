@@ -76,7 +76,9 @@ def _best_chrome_target():
     try:
         from curl_cffi.requests import BrowserType
         available = {e.value for e in BrowserType}
-    except Exception:
+    except ImportError:
+        # curl_cffi not installed or BrowserType not available
+        logger.debug("curl_cffi.BrowserType not available, using fallback targets")
         available = set()
 
     # Preference order: exact chrome versions, then suffixed variants
