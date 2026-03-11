@@ -321,6 +321,55 @@ class TwitterClient:
             },
         )
 
+    def fetch_article(self, tweet_id):
+        # type: (str) -> Tweet
+        """Fetch a Twitter Article by its tweet ID and return parsed content.
+
+        Uses TweetResultByRestId instead of TweetDetail because we only want
+        the article itself — TweetDetail would also fetch the replies timeline,
+        adding unnecessary data and parsing overhead.
+
+        withArticlePlainText=True is the key flag: without it the API omits the
+        article body from the response even when withArticleRichContentState=True.
+        The actual draft.js-to-Markdown conversion happens in _parse_article().
+        """
+        logger.debug("fetch_article: tweet_id=%s", tweet_id)
+
+        data = self._graphql_get(
+            "TweetResultByRestId",
+            variables={
+                "tweetId": tweet_id,
+                "withCommunity": False,
+                "includePromotedContent": False,
+                "withVoice": False,
+            },
+            features={
+                "longform_notetweets_consumption_enabled": True,
+                "responsive_web_twitter_article_tweet_consumption_enabled": True,
+                "longform_notetweets_rich_text_read_enabled": True,
+                "longform_notetweets_inline_media_enabled": True,
+                "articles_preview_enabled": True,
+                "responsive_web_graphql_exclude_directive_enabled": True,
+                "verified_phone_label_enabled": False,
+            },
+            field_toggles={
+                "withArticleRichContentState": True,
+                "withArticlePlainText": True,  # must be True — omitting returns no article body
+            },
+        )
+
+        # TweetResultByRestId returns a single result at data.tweetResult.result
+        result = _deep_get(data, "data", "tweetResult", "result")
+        if not result:
+            raise NotFoundError("Article not found: tweet_id=%s" % tweet_id)
+
+        tweet = parse_tweet_result(result)
+        if tweet is None or tweet.article_title is None:
+            raise NotFoundError("Tweet %s has no article content" % tweet_id)
+
+        logger.info("fetch_article: '%s' (tweet_id=%s)", tweet.article_title, tweet_id)
+        return tweet
+
     def fetch_list_timeline(self, list_id, count=20):
         # type: (str, int) -> List[Tweet]
         """Fetch tweets from a Twitter List."""

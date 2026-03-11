@@ -24,6 +24,7 @@ A terminal-first CLI for Twitter/X: read timelines, bookmarks, and user profiles
 - Bookmarks: list saved tweets from your account
 - Search: find tweets by keyword with Top/Latest/Photos/Videos tabs
 - Tweet detail: view a tweet and its replies
+- Article: fetch long-form Twitter Articles (rendered as Markdown in the terminal)
 - List timeline: fetch tweets from a Twitter List
 - User lookup: fetch user profile, tweets, likes, followers, and following
 - Structured output: export any data as YAML or JSON for scripting and AI agent integration
@@ -111,6 +112,11 @@ twitter search "trending" --filter              # Apply ranking filter
 # Tweet detail (view tweet + replies)
 twitter tweet 1234567890
 twitter tweet https://x.com/user/status/1234567890
+
+# Article (long-form Twitter Article)
+twitter article 1234567890
+twitter article https://x.com/user/article/1234567890  # /article/ URL also accepted
+twitter article 1234567890 --json
 
 # List timeline
 twitter list 1539453138322673664
@@ -278,16 +284,16 @@ Current CI validates the project on Python 3.8, 3.10, and 3.12.
 ```text
 twitter_cli/
 ├── __init__.py
-├── cli.py
-├── client.py
+├── cli.py           # CLI commands (entry point for all subcommands)
+├── client.py        # API methods — one method per Twitter feature
 ├── graphql.py       # GraphQL query IDs, URL building, JS bundle scanning
-├── parser.py        # Tweet, User, Media parsing logic
+├── parser.py        # Tweet, User, Media, Article parsing logic
 ├── auth.py
 ├── config.py
 ├── constants.py
 ├── exceptions.py
 ├── filter.py
-├── formatter.py
+├── formatter.py     # Rich terminal rendering (tables, panels, Markdown)
 ├── output.py
 ├── serialization.py
 └── models.py
@@ -328,6 +334,7 @@ After installation, OpenClaw can call `twitter-cli` commands directly.
 - 收藏读取：查看账号书签推文
 - 搜索：按关键词搜索推文，支持 Top/Latest/Photos/Videos
 - 推文详情：查看推文及其回复
+- 文章读取：获取 Twitter 长文（Articles），在终端以 Markdown 格式渲染
 - 列表时间线：获取 Twitter List 的推文
 - 用户查询：查看用户资料、推文、点赞、粉丝和关注
 - 结构化输出：支持 YAML 和 JSON，便于脚本处理和 AI agent 集成
@@ -386,6 +393,11 @@ twitter search "trending" --filter              # 启用排序筛选
 
 # 推文详情
 twitter tweet 1234567890
+
+# 文章（长文 Twitter Article）
+twitter article 1234567890
+twitter article https://x.com/user/article/1234567890  # 支持 /article/ 格式链接
+twitter article 1234567890 --json
 
 # 列表时间线
 twitter list 1539453138322673664

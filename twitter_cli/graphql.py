@@ -43,6 +43,10 @@ FALLBACK_QUERY_IDS = {
     "DeleteRetweet": "iQtK4dl5hBmXewYZuEOKVw",
     "CreateBookmark": "aoDbu3RHznuiSkQ9aNM67Q",
     "DeleteBookmark": "Wlmlj2-xISYCixDmuS8KNg",
+    # Single-tweet fetch — used by fetch_article to get just the article tweet
+    # without the replies timeline that TweetDetail returns.
+    # queryId sourced from the community twitter-openapi spec.
+    "TweetResultByRestId": "7xflPyRiUxGVbJd4uWmbfg",
 }
 
 # ── Default feature flags ────────────────────────────────────────────────

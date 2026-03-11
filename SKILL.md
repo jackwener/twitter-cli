@@ -1,6 +1,6 @@
 ---
 name: twitter-cli
-description: Use twitter-cli for ALL Twitter/X operations — reading tweets, posting, replying, quoting, liking, retweeting, following, searching, user lookups. Invoke whenever user requests any Twitter interaction.
+description: Use twitter-cli for ALL Twitter/X operations — reading tweets, articles, posting, replying, quoting, liking, retweeting, following, searching, user lookups. Invoke whenever user requests any Twitter interaction.
 author: jackwener
 version: "2.0.0"
 tags:
@@ -148,6 +148,9 @@ twitter search "AI agent" -t Latest --max 50
 twitter search "topic" -o results.json # Save to file
 twitter tweet 1234567890               # Tweet detail + replies
 twitter tweet https://x.com/user/status/12345  # Accepts URL
+twitter article 1234567890             # Twitter Article (long-form post, body as Markdown)
+twitter article https://x.com/user/article/12345  # Accepts /article/ URL
+twitter article 1234567890 --json      # Structured output with articleTitle + articleText
 twitter list 1539453138322673664       # List timeline
 twitter user-posts elonmusk --max 20   # User's tweets
 twitter likes elonmusk --max 30        # User's likes (own only, see note)
@@ -234,6 +237,16 @@ MY_NAME=$(twitter whoami --json | jq -r '.data.user.username')
 twitter followers "$MY_NAME" --max 200 --json | jq -r '.data[].username' | grep -q "targetuser" && echo "Yes" || echo "No"
 ```
 
+### Read and summarize a Twitter Article
+
+```bash
+# Fetch article as JSON and extract title + body for LLM summarization
+twitter article 1234567890 --json | jq '{title: .data.articleTitle, body: .data.articleText}'
+
+# Or use compact mode — note: compact truncates text, prefer --json for full article body
+twitter article https://x.com/user/article/1234567890 --json
+```
+
 ### Daily reading workflow
 
 ```bash
@@ -288,6 +301,7 @@ twitter bookmarks --filter
 - **No polls** — can't create polls
 - **Single account** — one set of credentials at a time
 - **Likes are private** — Twitter/X made all likes private since June 2024. `twitter likes` only works for your own account
+- **Articles read-only** — `twitter article` can read Articles but cannot create or edit them
 
 ## Safety Notes
 

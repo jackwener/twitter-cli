@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
@@ -145,6 +146,47 @@ def print_tweet_detail(tweet: Tweet, console: Optional[Console] = None) -> None:
         border_style="blue",
         expand=True,
     ))
+
+
+def print_article(tweet: Tweet, console: Optional[Console] = None) -> None:
+    """Print a Twitter Article with rich formatting.
+
+    Shows a header Panel (author, date, URL, stats) followed by the article
+    body rendered as Markdown. Separating body from Panel avoids line-length
+    constraints that a Panel would impose on long prose.
+    """
+    if console is None:
+        console = Console()
+
+    verified = " ✓" if tweet.author.verified else ""
+    title = tweet.article_title or "Article"
+
+    # Meta panel: author, link, engagement stats
+    meta_parts = [
+        "By @%s%s (%s)" % (tweet.author.screen_name, verified, tweet.author.name),
+        "🕐 %s" % tweet.created_at,
+        "🔗 x.com/%s/status/%s" % (tweet.author.screen_name, tweet.id),
+        "",
+        "❤️ %s  🔄 %s  💬 %s  🔖 %s  👁️ %s"
+        % (
+            format_number(tweet.metrics.likes),
+            format_number(tweet.metrics.retweets),
+            format_number(tweet.metrics.replies),
+            format_number(tweet.metrics.bookmarks),
+            format_number(tweet.metrics.views),
+        ),
+    ]
+    console.print(Panel(
+        "\n".join(meta_parts),
+        title="📰 %s" % title,
+        border_style="blue",
+        expand=True,
+    ))
+
+    # Render article body as Markdown if present
+    if tweet.article_text:
+        console.print()
+        console.print(Markdown(tweet.article_text))
 
 
 def print_filter_stats(

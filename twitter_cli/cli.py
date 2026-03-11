@@ -9,6 +9,7 @@ Read commands:
     twitter user-posts elonmusk       # user tweets
     twitter likes elonmusk            # user likes
     twitter tweet <id>                # tweet detail + replies
+    twitter article <id>              # Twitter Article (long-form)
     twitter list <id>                 # list timeline
     twitter followers <handle>        # followers list
     twitter following <handle>        # following list
@@ -45,6 +46,7 @@ from .client import TwitterClient
 from .config import load_config
 from .filter import filter_tweets
 from .formatter import (
+    print_article,
     print_filter_stats,
     print_tweet_detail,
     print_tweet_table,
@@ -62,6 +64,7 @@ from .output import (
     use_rich_output,
 )
 from .serialization import (
+    tweet_to_dict,
     tweets_from_json,
     tweets_to_data,
     tweets_to_compact_json,
@@ -209,7 +212,8 @@ def _normalize_tweet_id(value):
     candidate = raw
     if parsed.scheme and parsed.netloc:
         path = parsed.path.rstrip("/")
-        match = re.search(r"/status/(\d+)$", path)
+        # Matches both /status/<id> (tweets) and /article/<id> (Twitter Articles)
+        match = re.search(r"/(?:status|article)/(\d+)$", path)
         if not match:
             raise RuntimeError("Invalid tweet URL: %s" % value)
         candidate = match.group(1)
@@ -619,6 +623,44 @@ def tweet(ctx, tweet_id, max_count, as_json, as_yaml):
         if len(tweets) > 1:
             console.print("\n💬 Replies:")
             print_tweet_table(tweets[1:], console, title="💬 Replies — %d" % (len(tweets) - 1))
+    console.print()
+
+
+@cli.command(name="article")
+@click.argument("tweet_id")
+@structured_output_options
+@click.pass_context
+def article(ctx, tweet_id, as_json, as_yaml):
+    # type: (Any, str, bool, bool) -> None
+    """Fetch and display a Twitter Article. TWEET_ID is the numeric tweet ID or full URL.
+
+    Twitter Articles are long-form posts (distinct from regular tweets).
+    The article body is rendered as Markdown in the terminal.
+    """
+    compact = ctx.obj.get("compact", False)
+    tweet_id = _normalize_tweet_id(tweet_id)
+    config = load_config()
+    rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
+    try:
+        client = _get_client_for_output(config, quiet=not rich_output)
+        if rich_output:
+            console.print("📰 Fetching article %s...\n" % tweet_id)
+        start = time.time()
+        art = client.fetch_article(tweet_id)
+        elapsed = time.time() - start
+        if rich_output:
+            console.print("✅ Fetched in %.1fs\n" % elapsed)
+    except RuntimeError as exc:
+        _exit_with_error(exc)
+
+    if compact:
+        click.echo(tweets_to_compact_json([art]))
+        return
+
+    if emit_structured(tweet_to_dict(art), as_json=as_json, as_yaml=as_yaml):
+        return
+
+    print_article(art, console)
     console.print()
 
 
