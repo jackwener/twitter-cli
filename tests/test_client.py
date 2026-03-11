@@ -276,6 +276,8 @@ class TestBuildHeaders:
         assert "sec-ch-ua" in headers
 
     @patch("twitter_cli.client.get_sec_ch_ua_platform", return_value='"Linux"')
+    @patch("twitter_cli.client.get_sec_ch_ua_platform_version", return_value='""')
+    @patch("twitter_cli.client.get_sec_ch_ua_arch", return_value='"x86"')
     @patch("twitter_cli.client.get_accept_language", return_value="zh-CN,zh;q=0.9,en;q=0.8")
     @patch("twitter_cli.client.get_twitter_client_language", return_value="zh")
     @patch("twitter_cli.client._get_cffi_session")
@@ -286,6 +288,8 @@ class TestBuildHeaders:
         mock_session,
         mock_client_language,
         mock_accept_language,
+        mock_arch,
+        mock_platform_version,
         mock_platform,
     ):
         mock_session.return_value = MagicMock()
@@ -307,6 +311,8 @@ class TestBuildHeaders:
         assert headers["X-Twitter-Client-Language"] == "zh"
         assert headers["Accept-Language"] == "zh-CN,zh;q=0.9,en;q=0.8"
         assert headers["sec-ch-ua-platform"] == '"Linux"'
+        assert headers["sec-ch-ua-arch"] == '"x86"'
+        assert headers["sec-ch-ua-platform-version"] == '""'
 
 
 class TestPaginationBehavior:
@@ -355,6 +361,49 @@ class TestPaginationBehavior:
 
         assert tweets == []
         assert calls == [None, "cursor-same"]
+
+    def test_user_list_continues_when_cursor_advances_without_new_users(self):
+        client = TwitterClient.__new__(TwitterClient)
+        client._request_delay = 0.0
+        client._max_count = 200
+
+        responses = iter(
+            [
+                {"page": 1},
+                {"page": 2},
+            ]
+        )
+
+        def _graphql_get(operation_name, variables, features):
+            return next(responses)
+
+        def _parse_user_result(data):
+            return MagicMock(id=data["id"], screen_name=data["screen_name"])
+
+        def _get_instructions(data):
+            if data["page"] == 1:
+                return [
+                    {"entries": [{"content": {"entryType": "TimelineTimelineCursor", "cursorType": "Bottom", "value": "cursor-2"}}]}
+                ]
+            return [
+                {
+                    "entries": [
+                        {
+                            "content": {
+                                "entryType": "TimelineTimelineItem",
+                                "itemContent": {"user_results": {"result": {"id": "user-1", "screen_name": "alice"}}},
+                            }
+                        }
+                    ]
+                }
+            ]
+
+        client._graphql_get = _graphql_get
+        client._parse_user_result = _parse_user_result
+
+        users = client._fetch_user_list("Followers", "1", 1, _get_instructions)
+
+        assert [user.screen_name for user in users] == ["alice"]
 
 
 # ── TwitterClient._parse_tweet_result ─────────────────────────────────────

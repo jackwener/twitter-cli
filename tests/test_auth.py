@@ -243,6 +243,36 @@ def test_iter_chrome_cookie_files_env_override(monkeypatch, tmp_path) -> None:
     assert "Profile 5" in paths[0]
 
 
+def test_iter_chrome_cookie_files_edge_linux_uses_microsoft_edge_path(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(auth.sys, "platform", "linux")
+    edge_dir = tmp_path / ".config" / "microsoft-edge"
+    (edge_dir / "Default").mkdir(parents=True)
+    (edge_dir / "Default" / "Cookies").touch()
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("TWITTER_CHROME_PROFILE", raising=False)
+
+    paths = auth._iter_chrome_cookie_files("edge")
+
+    assert len(paths) == 1
+    assert paths[0].endswith(".config/microsoft-edge/Default/Cookies")
+
+
+def test_iter_chrome_cookie_files_edge_windows_uses_user_data(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(auth.sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.delenv("TWITTER_CHROME_PROFILE", raising=False)
+
+    edge_dir = tmp_path / "Microsoft" / "Edge" / "User Data" / "Default"
+    edge_dir.mkdir(parents=True)
+    (edge_dir / "Cookies").touch()
+
+    paths = auth._iter_chrome_cookie_files("edge")
+
+    assert len(paths) == 1
+    assert "Microsoft/Edge/User Data/Default/Cookies".replace("/", os.sep) in paths[0]
+
+
 def test_extract_in_process_tries_multiple_profiles(monkeypatch, tmp_path) -> None:
     """When Default has no Twitter cookies but Profile 1 does, it should find them."""
 
@@ -366,4 +396,3 @@ def test_extract_in_process_returns_diagnostics_on_failure(monkeypatch) -> None:
 
     assert cookies is None
     assert any("cookie decryption" in d for d in diagnostics)
-

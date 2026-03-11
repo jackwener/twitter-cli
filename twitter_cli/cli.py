@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import inspect
 import sys
 import time
 import urllib.parse
@@ -148,9 +149,13 @@ def _get_client_for_output(config=None, quiet=False):
     # type: (Optional[Dict[str, Any]], bool) -> TwitterClient
     """Call _get_client while staying compatible with monkeypatched legacy signatures."""
     try:
+        signature = inspect.signature(_get_client)
+    except (TypeError, ValueError):
+        signature = None
+
+    if signature and "quiet" in signature.parameters:
         return _get_client(config, quiet=quiet)
-    except TypeError:
-        return _get_client(config)
+    return _get_client(config)
 
 
 def _exit_with_error(exc):

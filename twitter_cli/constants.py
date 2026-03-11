@@ -95,13 +95,32 @@ def get_sec_ch_ua_platform():
     return '"Linux"'
 
 
+def get_sec_ch_ua_arch():
+    # type: () -> str
+    machine = (os.uname().machine if hasattr(os, "uname") else "").lower()
+    if "arm" in machine or "aarch" in machine:
+        return '"arm"'
+    if "86" in machine or "amd64" in machine or "x64" in machine:
+        return '"x86"'
+    return '""'
+
+
+def get_sec_ch_ua_platform_version():
+    # type: () -> str
+    if sys.platform == "darwin":
+        return '"15.0.0"'
+    if sys.platform.startswith("win"):
+        return '"10.0.0"'
+    return '""'
+
+
 # Static Client Hints
 SEC_CH_UA_MOBILE = "?0"
 SEC_CH_UA_PLATFORM = get_sec_ch_ua_platform()
-SEC_CH_UA_ARCH = '"arm"' if sys.platform == "darwin" else '"x86"'
+SEC_CH_UA_ARCH = get_sec_ch_ua_arch()
 SEC_CH_UA_BITNESS = '"64"'
 SEC_CH_UA_MODEL = '""'
-SEC_CH_UA_PLATFORM_VERSION = '"15.0.0"' if sys.platform == "darwin" else '"10.0.0"'
+SEC_CH_UA_PLATFORM_VERSION = get_sec_ch_ua_platform_version()
 
 # Legacy aliases — modules that import these get the default value.
 # _build_headers() should use get_user_agent() / get_sec_ch_ua() instead.

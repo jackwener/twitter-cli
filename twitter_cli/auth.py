@@ -189,7 +189,7 @@ def _extract_cookies_from_jar(jar: Any, source: str = "unknown") -> Optional[Dic
 _CHROMIUM_BASE_DIRS: Dict[str, str] = {
     "chrome": os.path.join("Google", "Chrome"),
     "arc": os.path.join("Arc", "User Data"),
-    "edge": os.path.join("Microsoft Edge"),
+    "edge": "Microsoft Edge",
     "brave": os.path.join("BraveSoftware", "Brave-Browser"),
 }
 
@@ -207,9 +207,15 @@ def _iter_chrome_cookie_files(browser_name: str) -> List[str]:
     if sys.platform == "darwin":
         root = os.path.join(os.path.expanduser("~"), "Library", "Application Support", base_dir)
     elif sys.platform == "win32":
-        root = os.path.join(os.environ.get("LOCALAPPDATA", ""), base_dir, "User Data")
+        if browser_name == "edge":
+            root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data")
+        else:
+            root = os.path.join(os.environ.get("LOCALAPPDATA", ""), base_dir)
     else:
-        root = os.path.join(os.path.expanduser("~"), ".config", base_dir)
+        if browser_name == "edge":
+            root = os.path.join(os.path.expanduser("~"), ".config", "microsoft-edge")
+        else:
+            root = os.path.join(os.path.expanduser("~"), ".config", base_dir)
 
     if not os.path.isdir(root):
         return []

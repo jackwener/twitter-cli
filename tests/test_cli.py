@@ -20,6 +20,18 @@ def test_cli_user_command_works_with_client_factory(monkeypatch) -> None:
     assert result.exit_code == 0
 
 
+def test_get_client_for_output_does_not_swallow_real_type_error(monkeypatch) -> None:
+    def _broken_get_client(config=None, quiet=False):
+        raise TypeError("real bug")
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", _broken_get_client)
+
+    with pytest.raises(TypeError, match="real bug"):
+        from twitter_cli.cli import _get_client_for_output
+
+        _get_client_for_output({})
+
+
 def test_cli_feed_json_input_path(tmp_path, tweet_factory) -> None:
     json_path = tmp_path / "tweets.json"
     json_path.write_text(tweets_to_json([tweet_factory("1")]), encoding="utf-8")

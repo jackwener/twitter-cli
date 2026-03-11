@@ -18,16 +18,16 @@ from x_client_transaction.utils import generate_headers as _gen_ct_headers, get_
 
 from .constants import (
     BEARER_TOKEN,
-    SEC_CH_UA_ARCH,
     SEC_CH_UA_BITNESS,
     SEC_CH_UA_MOBILE,
     SEC_CH_UA_MODEL,
-    SEC_CH_UA_PLATFORM_VERSION,
     get_accept_language,
+    get_sec_ch_ua_arch,
     get_sec_ch_ua,
     get_sec_ch_ua_full_version,
     get_sec_ch_ua_full_version_list,
     get_sec_ch_ua_platform,
+    get_sec_ch_ua_platform_version,
     get_twitter_client_language,
     get_user_agent,
     sync_chrome_version,
@@ -645,9 +645,15 @@ class TwitterClient:
                     seen_ids.add(user.id)
                     users.append(user)
 
-            if not next_cursor or not new_users:
+            if not next_cursor:
+                break
+            if next_cursor == cursor:
+                logger.debug("User list pagination stopped because cursor did not advance: %s", next_cursor)
                 break
             cursor = next_cursor
+
+            if not new_users:
+                logger.debug("User list page returned no users but exposed next cursor; continuing pagination")
 
             if len(users) < count and self._request_delay > 0:
                 time.sleep(self._request_delay * random.uniform(0.7, 1.5))
@@ -903,12 +909,12 @@ class TwitterClient:
             "sec-ch-ua": get_sec_ch_ua(),
             "sec-ch-ua-mobile": SEC_CH_UA_MOBILE,
             "sec-ch-ua-platform": get_sec_ch_ua_platform(),
-            "sec-ch-ua-arch": SEC_CH_UA_ARCH,
+            "sec-ch-ua-arch": get_sec_ch_ua_arch(),
             "sec-ch-ua-bitness": SEC_CH_UA_BITNESS,
             "sec-ch-ua-full-version": get_sec_ch_ua_full_version(),
             "sec-ch-ua-full-version-list": get_sec_ch_ua_full_version_list(),
             "sec-ch-ua-model": SEC_CH_UA_MODEL,
-            "sec-ch-ua-platform-version": SEC_CH_UA_PLATFORM_VERSION,
+            "sec-ch-ua-platform-version": get_sec_ch_ua_platform_version(),
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
