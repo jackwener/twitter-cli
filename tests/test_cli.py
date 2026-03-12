@@ -6,8 +6,8 @@ from rich.console import Console
 import yaml
 
 from twitter_cli.cli import cli
-from twitter_cli.formatter import print_tweet_table
-from twitter_cli.models import UserProfile
+from twitter_cli.formatter import article_to_markdown, print_tweet_table
+from twitter_cli.models import Author, Metrics, Tweet, UserProfile
 from twitter_cli.serialization import tweets_to_json
 
 
@@ -123,6 +123,104 @@ def test_cli_tweet_accepts_shared_url_with_query(monkeypatch) -> None:
     result = runner.invoke(cli, ["tweet", "https://x.com/user/status/12345?s=20"])
 
     assert result.exit_code == 0
+
+
+def test_cli_article_accepts_article_url_and_json(monkeypatch) -> None:
+    class FakeClient:
+        def fetch_article(self, tweet_id: str) -> Tweet:
+            assert tweet_id == "12345"
+            return Tweet(
+                id="12345",
+                text="https://t.co/article",
+                author=Author(id="u1", name="Alice", screen_name="alice"),
+                metrics=Metrics(likes=1, retweets=2, replies=3, views=4, bookmarks=5),
+                created_at="2026-03-11",
+                article_title="Title",
+                article_text="Hello\n\n## Section",
+            )
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda: {"fetch": {"count": 50}, "filter": {}, "rateLimit": {}},
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["article", "https://x.com/user/article/12345?s=20", "--json"])
+
+    assert result.exit_code == 0
+    payload = yaml.safe_load(result.output)
+    assert payload["ok"] is True
+    assert payload["data"]["id"] == "12345"
+    assert payload["data"]["articleTitle"] == "Title"
+    assert "Hello" in payload["data"]["articleText"]
+
+
+def test_cli_article_markdown_output_and_save(monkeypatch, tmp_path) -> None:
+    article = Tweet(
+        id="12345",
+        text="https://t.co/article",
+        author=Author(id="u1", name="Alice", screen_name="alice"),
+        metrics=Metrics(likes=1, retweets=2, replies=3, views=4, bookmarks=5),
+        created_at="2026-03-11",
+        article_title="Title",
+        article_text="Hello\n\n## Section",
+    )
+
+    class FakeClient:
+        def fetch_article(self, tweet_id: str) -> Tweet:
+            assert tweet_id == "12345"
+            return article
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None: FakeClient())
+    monkeypatch.setattr("twitter_cli.cli.load_config", lambda: {})
+    output_path = tmp_path / "article.md"
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["article", "12345", "--markdown", "--output", str(output_path)],
+    )
+
+    assert result.exit_code == 0
+    assert result.output == article_to_markdown(article)
+    assert output_path.read_text(encoding="utf-8") == article_to_markdown(article)
+
+
+def test_cli_article_markdown_overrides_auto_structured_output(monkeypatch) -> None:
+    article = Tweet(
+        id="12345",
+        text="https://t.co/article",
+        author=Author(id="u1", name="Alice", screen_name="alice"),
+        metrics=Metrics(likes=1, retweets=2, replies=3, views=4, bookmarks=5),
+        created_at="2026-03-11",
+        article_title="Title",
+        article_text="Hello\n\n## Section",
+    )
+
+    class FakeClient:
+        def fetch_article(self, tweet_id: str) -> Tweet:
+            assert tweet_id == "12345"
+            return article
+
+    monkeypatch.setenv("OUTPUT", "auto")
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None: FakeClient())
+    monkeypatch.setattr("twitter_cli.cli.load_config", lambda: {})
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["article", "12345", "--markdown"])
+
+    assert result.exit_code == 0
+    assert result.output == article_to_markdown(article)
+
+
+def test_cli_article_rejects_compact_mode() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["-c", "article", "12345"])
+
+    assert result.exit_code == 2
+    assert "does not support --compact" in result.output
 
 
 def test_cli_bookmark_alias_works(monkeypatch) -> None:

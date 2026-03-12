@@ -43,6 +43,7 @@ FALLBACK_QUERY_IDS = {
     "DeleteRetweet": "iQtK4dl5hBmXewYZuEOKVw",
     "CreateBookmark": "aoDbu3RHznuiSkQ9aNM67Q",
     "DeleteBookmark": "Wlmlj2-xISYCixDmuS8KNg",
+    "TweetResultByRestId": "7xflPyRiUxGVbJd4uWmbfg",
 }
 
 # ── Default feature flags ────────────────────────────────────────────────

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
@@ -148,6 +149,61 @@ def print_tweet_detail(tweet: Tweet, console: Optional[Console] = None) -> None:
         border_style="blue",
         expand=True,
     ))
+
+
+def article_to_markdown(tweet: Tweet) -> str:
+    """Convert a Twitter Article tweet into a Markdown document."""
+    title = tweet.article_title or "Twitter Article"
+    lines = [
+        "# %s" % title,
+        "",
+        "- Author: @%s (%s)" % (tweet.author.screen_name, tweet.author.name),
+        "- Published: %s" % (tweet.created_at or "unknown"),
+        "- URL: https://x.com/%s/status/%s" % (tweet.author.screen_name, tweet.id),
+        "- Likes: %s" % format_number(tweet.metrics.likes),
+        "- Retweets: %s" % format_number(tweet.metrics.retweets),
+        "- Replies: %s" % format_number(tweet.metrics.replies),
+        "- Bookmarks: %s" % format_number(tweet.metrics.bookmarks),
+        "- Views: %s" % format_number(tweet.metrics.views),
+    ]
+
+    if tweet.article_text:
+        lines.extend(["", tweet.article_text.strip()])
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def print_article(tweet: Tweet, console: Optional[Console] = None) -> None:
+    """Print a Twitter Article with rich formatting."""
+    if console is None:
+        console = Console()
+
+    verified = " ✓" if tweet.author.verified else ""
+    title = tweet.article_title or "Twitter Article"
+    meta_parts = [
+        "By @%s%s (%s)" % (tweet.author.screen_name, verified, tweet.author.name),
+        "🕐 %s" % tweet.created_at,
+        "🔗 x.com/%s/status/%s" % (tweet.author.screen_name, tweet.id),
+        "",
+        "❤️ %s  🔄 %s  💬 %s  🔖 %s  👁️ %s"
+        % (
+            format_number(tweet.metrics.likes),
+            format_number(tweet.metrics.retweets),
+            format_number(tweet.metrics.replies),
+            format_number(tweet.metrics.bookmarks),
+            format_number(tweet.metrics.views),
+        ),
+    ]
+    console.print(Panel(
+        "\n".join(meta_parts),
+        title="📰 %s" % title,
+        border_style="blue",
+        expand=True,
+    ))
+
+    if tweet.article_text:
+        console.print()
+        console.print(Markdown(tweet.article_text))
 
 
 def print_filter_stats(

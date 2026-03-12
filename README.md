@@ -24,6 +24,7 @@ A terminal-first CLI for Twitter/X: read timelines, bookmarks, and user profiles
 - Bookmarks: list saved tweets from your account
 - Search: find tweets by keyword with Top/Latest/Photos/Videos tabs
 - Tweet detail: view a tweet and its replies
+- Article: fetch a Twitter Article and export it as Markdown
 - List timeline: fetch tweets from a Twitter List
 - User lookup: fetch user profile, tweets, likes, followers, and following
 - `--full-text`: disable tweet text truncation in rich table output
@@ -116,6 +117,12 @@ twitter search "trending" --filter              # Apply ranking filter
 twitter tweet 1234567890
 twitter tweet 1234567890 --full-text
 twitter tweet https://x.com/user/status/1234567890
+
+# Twitter Article
+twitter article 1234567890
+twitter article https://x.com/user/article/1234567890 --json
+twitter article 1234567890 --markdown
+twitter article 1234567890 --output article.md
 
 # List timeline
 twitter list 1539453138322673664
@@ -344,6 +351,7 @@ After installation, OpenClaw can call `twitter-cli` commands directly.
 - 收藏读取：查看账号书签推文
 - 搜索：按关键词搜索推文，支持 Top/Latest/Photos/Videos
 - 推文详情：查看推文及其回复
+- 文章读取：获取 Twitter 长文，并导出为 Markdown
 - 列表时间线：获取 Twitter List 的推文
 - 用户查询：查看用户资料、推文、点赞、粉丝和关注
 - `--full-text`：在 rich table 输出里关闭推文正文截断
@@ -407,6 +415,12 @@ twitter search "trending" --filter              # 启用排序筛选
 # 推文详情
 twitter tweet 1234567890
 twitter tweet 1234567890 --full-text
+
+# Twitter 长文
+twitter article 1234567890
+twitter article https://x.com/user/article/1234567890 --json
+twitter article 1234567890 --markdown
+twitter article 1234567890 --output article.md
 
 # 列表时间线
 twitter list 1539453138322673664

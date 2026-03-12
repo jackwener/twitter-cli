@@ -49,3 +49,16 @@ def test_compact_serialization(tweet_factory) -> None:
     assert len(parsed) == 1
     assert parsed[0]["author"] == "@alice"
 
+
+def test_tweet_roundtrip_preserves_article_fields(tweet_factory) -> None:
+    tweet = tweet_factory(
+        "88",
+        article_title="Long-form title",
+        article_text="Intro\n\n## Details",
+    )
+
+    payload = tweet_to_dict(tweet)
+    restored = tweet_from_dict(payload)
+
+    assert restored.article_title == "Long-form title"
+    assert restored.article_text == "Intro\n\n## Details"

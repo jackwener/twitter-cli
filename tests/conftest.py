@@ -36,6 +36,8 @@ def tweet_factory():
             retweeted_by=overrides.pop("retweeted_by", None),
             quoted_tweet=overrides.pop("quoted_tweet", None),
             score=overrides.pop("score", 0.0),
+            article_title=overrides.pop("article_title", None),
+            article_text=overrides.pop("article_text", None),
         )
 
     return _make_tweet

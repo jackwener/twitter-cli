@@ -9,6 +9,7 @@ Read commands:
     twitter user-posts elonmusk       # user tweets
     twitter likes elonmusk            # user likes
     twitter tweet <id>                # tweet detail + replies
+    twitter article <id>              # Twitter Article as Markdown
     twitter list <id>                 # list timeline
     twitter followers <handle>        # followers list
     twitter following <handle>        # following list
@@ -46,7 +47,9 @@ from .client import TwitterClient
 from .config import load_config
 from .filter import filter_tweets
 from .formatter import (
+    article_to_markdown,
     print_filter_stats,
+    print_article,
     print_tweet_detail,
     print_tweet_table,
     print_user_profile,
@@ -63,6 +66,7 @@ from .output import (
     use_rich_output,
 )
 from .serialization import (
+    tweet_to_dict,
     tweets_from_json,
     tweets_to_data,
     tweets_to_compact_json,
@@ -214,7 +218,7 @@ def _normalize_tweet_id(value):
     candidate = raw
     if parsed.scheme and parsed.netloc:
         path = parsed.path.rstrip("/")
-        match = re.search(r"/status/(\d+)$", path)
+        match = re.search(r"/(?:status|article)/(\d+)$", path)
         if not match:
             raise RuntimeError("Invalid tweet URL: %s" % value)
         candidate = match.group(1)
@@ -653,6 +657,52 @@ def tweet(ctx, tweet_id, max_count, full_text, as_json, as_yaml):
         if len(tweets) > 1:
             console.print("\n💬 Replies:")
             print_tweet_table(tweets[1:], console, title="💬 Replies — %d" % (len(tweets) - 1), full_text=full_text)
+    console.print()
+
+
+@cli.command()
+@click.argument("tweet_id")
+@structured_output_options
+@click.option("--markdown", "-m", "as_markdown", is_flag=True, help="Output article as Markdown.")
+@click.option("--output", "-o", "output_file", type=str, default=None, help="Save article Markdown to file.")
+@click.pass_context
+def article(ctx, tweet_id, as_json, as_yaml, as_markdown, output_file):
+    # type: (Any, str, bool, bool, bool, Optional[str]) -> None
+    """Fetch a Twitter Article. TWEET_ID is the numeric tweet ID or full URL."""
+    compact = ctx.obj.get("compact", False)
+    if compact:
+        raise click.UsageError("`twitter article` does not support --compact. Use --markdown or --output.")
+    if as_markdown and (as_json or as_yaml):
+        raise click.UsageError("Use only one of --markdown, --json, or --yaml.")
+
+    tweet_id = _normalize_tweet_id(tweet_id)
+    config = load_config()
+    rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=False) and not as_markdown
+    try:
+        client = _get_client_for_output(config, quiet=not rich_output)
+        if rich_output:
+            console.print("📰 Fetching article %s...\n" % tweet_id)
+        start = time.time()
+        article_tweet = client.fetch_article(tweet_id)
+        elapsed = time.time() - start
+        if rich_output:
+            console.print("✅ Fetched article in %.1fs\n" % elapsed)
+    except RuntimeError as exc:
+        _exit_with_error(exc)
+
+    markdown = article_to_markdown(article_tweet)
+    if output_file:
+        Path(output_file).write_text(markdown, encoding="utf-8")
+        if rich_output:
+            console.print("💾 Saved article Markdown to %s\n" % output_file)
+
+    if as_markdown:
+        click.echo(markdown, nl=False)
+        return
+    if emit_structured(tweet_to_dict(article_tweet), as_json=as_json, as_yaml=as_yaml):
+        return
+
+    print_article(article_tweet, console)
     console.print()
 
 
