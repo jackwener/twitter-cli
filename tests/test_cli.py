@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import time
+
 from click.testing import CliRunner
 import pytest
 from rich.console import Console
@@ -538,3 +541,105 @@ def test_cli_compact_mode(tmp_path, tweet_factory) -> None:
     assert '"@alice"' in result.output
     # Compact output should NOT have full metrics keys
     assert '"metrics"' not in result.output
+
+
+def _write_cache(cache_file, tweets, created_at=None):
+    """Write a test cache file."""
+    if created_at is None:
+        created_at = time.time()
+    entries = [
+        {"index": i + 1, "id": t.id, "author": t.author.screen_name, "text": t.text[:80]}
+        for i, t in enumerate(tweets)
+    ]
+    payload = {"created_at": created_at, "tweets": entries}
+    cache_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def test_show_happy_path(monkeypatch, tmp_path, tweet_factory):
+    """show <N> resolves cached index and fetches tweet detail."""
+    tw = tweet_factory("42", text="hello world")
+    cache_file = tmp_path / "last_results.json"
+    _write_cache(cache_file, [tweet_factory("10"), tw])  # tw is index 2
+
+    monkeypatch.setattr("twitter_cli.cache._CACHE_FILE", cache_file)
+
+    class FakeClient:
+        def fetch_tweet_detail(self, tweet_id, count):
+            assert tweet_id == "42"
+            return [tw]
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr("twitter_cli.cli.load_config", lambda: {})
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["show", "2"])
+    assert result.exit_code == 0
+
+
+def test_show_empty_cache(monkeypatch, tmp_path):
+    """show fails with a helpful message when no cache exists."""
+    cache_file = tmp_path / "last_results.json"
+    monkeypatch.setattr("twitter_cli.cache._CACHE_FILE", cache_file)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["show", "1"])
+    assert result.exit_code != 0
+    assert "No cached results" in result.output
+
+
+def test_show_out_of_range(monkeypatch, tmp_path, tweet_factory):
+    """show fails with out-of-range message when index exceeds cache size."""
+    cache_file = tmp_path / "last_results.json"
+    _write_cache(cache_file, [tweet_factory("1")])
+    monkeypatch.setattr("twitter_cli.cache._CACHE_FILE", cache_file)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["show", "99"])
+    assert result.exit_code != 0
+    assert "out of range" in result.output
+    assert "1" in result.output  # cache has 1 tweet
+
+
+def test_show_expired_cache(monkeypatch, tmp_path, tweet_factory):
+    """show treats an expired cache the same as no cache."""
+    cache_file = tmp_path / "last_results.json"
+    expired_time = time.time() - 7200  # 2 hours ago
+    _write_cache(cache_file, [tweet_factory("1")], created_at=expired_time)
+    monkeypatch.setattr("twitter_cli.cache._CACHE_FILE", cache_file)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["show", "1"])
+    assert result.exit_code != 0
+    assert "No cached results" in result.output
+
+
+def test_show_rejects_zero_index(monkeypatch, tmp_path):
+    """show rejects index=0 because indices are 1-based."""
+    cache_file = tmp_path / "last_results.json"
+    monkeypatch.setattr("twitter_cli.cache._CACHE_FILE", cache_file)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["show", "0"])
+    assert result.exit_code != 0
+
+
+def test_show_rejects_negative_index(monkeypatch, tmp_path):
+    """show rejects negative indices."""
+    cache_file = tmp_path / "last_results.json"
+    monkeypatch.setattr("twitter_cli.cache._CACHE_FILE", cache_file)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["show", "-1"])
+    assert result.exit_code != 0
+
+
+def test_show_malformed_cache_treated_as_empty(monkeypatch, tmp_path):
+    """show handles a corrupted cache file gracefully."""
+    cache_file = tmp_path / "last_results.json"
+    cache_file.write_text("not valid json{{}", encoding="utf-8")
+    monkeypatch.setattr("twitter_cli.cache._CACHE_FILE", cache_file)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["show", "1"])
+    assert result.exit_code != 0
+    assert "No cached results" in result.output

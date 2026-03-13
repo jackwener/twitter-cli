@@ -165,6 +165,9 @@ twitter search "topic" -o results.json # Save to file
 twitter tweet 1234567890               # Tweet detail + replies
 twitter tweet 1234567890 --full-text   # Full text in reply table
 twitter tweet https://x.com/user/status/12345  # Accepts URL
+twitter show 2                         # Open tweet #2 from last feed/search list
+twitter show 2 --full-text             # Full text in reply table
+twitter show 2 --json                  # Structured output
 twitter list 1539453138322673664       # List timeline
 twitter list 1539453138322673664 --full-text
 twitter user-posts elonmusk --max 20   # User's tweets

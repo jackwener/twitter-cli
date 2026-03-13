@@ -45,6 +45,7 @@ from rich.console import Console
 
 from . import __version__
 from .auth import get_cookies
+from .cache import get_cache_size, get_tweet_id_by_index, save_tweet_cache
 from .client import TwitterClient
 from .config import load_config
 from .filter import filter_tweets
@@ -351,12 +352,14 @@ def _fetch_and_display(fetch_fn, label, emoji, max_count, as_json, as_yaml, outp
     if emit_structured(tweets_to_data(filtered), as_json=as_json, as_yaml=as_yaml):
         return
 
+    save_tweet_cache(filtered)
     print_tweet_table(
         filtered,
         console,
         title="%s %s — %d tweets" % (emoji, label, len(filtered)),
         full_text=full_text,
     )
+    console.print("[dim]💡 Use `twitter show <N>` to view tweet #N from this list.[/dim]")
     console.print()
 
 
@@ -445,7 +448,9 @@ def feed(ctx, feed_type, max_count, as_json, as_yaml, input_file, output_file, d
 
     title = "👥 Following" if feed_type == "following" else "📱 Twitter"
     title += " — %d tweets" % len(filtered)
+    save_tweet_cache(filtered)
     print_tweet_table(filtered, console, title=title, full_text=full_text)
+    console.print("[dim]💡 Use `twitter show <N>` to view tweet #N from this list.[/dim]")
     console.print()
 
 
@@ -699,6 +704,12 @@ def tweet(ctx, tweet_id, max_count, full_text, as_json, as_yaml):
     except RuntimeError as exc:
         _exit_with_error(exc)
 
+    _emit_tweet_detail(tweets, compact=compact, as_json=as_json, as_yaml=as_yaml, full_text=full_text)
+
+
+def _emit_tweet_detail(tweets, compact, as_json, as_yaml, full_text):
+    # type: (list, bool, bool, bool, bool) -> None
+    """Render tweet detail + replies in the requested output format."""
     if compact:
         click.echo(tweets_to_compact_json(tweets))
         return
@@ -712,6 +723,46 @@ def tweet(ctx, tweet_id, max_count, full_text, as_json, as_yaml):
             console.print("\n💬 Replies:")
             print_tweet_table(tweets[1:], console, title="💬 Replies — %d" % (len(tweets) - 1), full_text=full_text)
     console.print()
+
+
+@cli.command()
+@click.argument("index", type=click.IntRange(1))
+@click.option("--max", "-n", "max_count", type=int, default=None, help="Max replies to fetch.")
+@click.option("--full-text", is_flag=True, help="Show full reply text in table output.")
+@structured_output_options
+@click.pass_context
+def show(ctx, index, max_count, full_text, as_json, as_yaml):
+    # type: (Any, int, Optional[int], bool, bool, bool) -> None
+    """View tweet #INDEX from the last feed/search results."""
+    compact = ctx.obj.get("compact", False)
+
+    tweet_id = get_tweet_id_by_index(index)
+    if tweet_id is None:
+        cache_size = get_cache_size()
+        if cache_size == 0:
+            raise click.UsageError(
+                "No cached results found. Run `twitter feed`, `twitter search`, "
+                "`twitter bookmarks`, or another list command first."
+            )
+        raise click.UsageError(
+            "Index %d is out of range (cache has %d tweets)." % (index, cache_size)
+        )
+
+    config = load_config()
+    rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
+    try:
+        client = _get_client_for_output(config, quiet=not rich_output)
+        if rich_output:
+            console.print("🐦 Fetching tweet #%d (id: %s)...\n" % (index, tweet_id))
+        start = time.time()
+        tweets = client.fetch_tweet_detail(tweet_id, _resolve_configured_count(config, max_count))
+        elapsed = time.time() - start
+        if rich_output:
+            console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
+    except RuntimeError as exc:
+        _exit_with_error(exc)
+
+    _emit_tweet_detail(tweets, compact=compact, as_json=as_json, as_yaml=as_yaml, full_text=full_text)
 
 
 @cli.command()

@@ -8,3 +8,4 @@ build/
 *.json
 !tests/fixtures/*.json
 !config.yaml
+.idea/

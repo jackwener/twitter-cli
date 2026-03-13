@@ -23,7 +23,7 @@ A terminal-first CLI for Twitter/X: read timelines, bookmarks, and user profiles
 - Timeline: fetch `for-you` and `following` feeds
 - Bookmarks: list saved tweets from your account
 - Search: find tweets by keyword with Top/Latest/Photos/Videos tabs
-- Tweet detail: view a tweet and its replies
+- Tweet detail: view a tweet and its replies; use `show <N>` to open tweet #N from the last list output
 - Article: fetch a Twitter Article and export it as Markdown
 - List timeline: fetch tweets from a Twitter List
 - User lookup: fetch user profile, tweets, likes, followers, and following
@@ -121,6 +121,11 @@ twitter search "trending" --filter              # Apply ranking filter
 twitter tweet 1234567890
 twitter tweet 1234567890 --full-text
 twitter tweet https://x.com/user/status/1234567890
+
+# Open tweet by index from last list output
+twitter show 2                         # Open tweet #2 from last feed/search
+twitter show 2 --full-text             # Full text in reply table
+twitter show 2 --json                  # Structured output
 
 # Twitter Article
 twitter article 1234567890
@@ -358,7 +363,7 @@ After installation, OpenClaw can call `twitter-cli` commands directly.
 - 时间线读取：支持 `for-you` 和 `following`
 - 收藏读取：查看账号书签推文
 - 搜索：按关键词搜索推文，支持 Top/Latest/Photos/Videos
-- 推文详情：查看推文及其回复
+- 推文详情：查看推文及其回复；用 `show <N>` 可直接打开上次列表里的第 N 条推文
 - 文章读取：获取 Twitter 长文，并导出为 Markdown
 - 列表时间线：获取 Twitter List 的推文
 - 用户查询：查看用户资料、推文、点赞、粉丝和关注
@@ -424,6 +429,11 @@ twitter search "trending" --filter              # 启用排序筛选
 # 推文详情
 twitter tweet 1234567890
 twitter tweet 1234567890 --full-text
+
+# 通过序号打开上次列表里的推文
+twitter show 2                         # 打开上次 feed/search 的第 2 条
+twitter show 2 --full-text             # 在回复表格里显示完整正文
+twitter show 2 --json                  # 结构化输出
 
 # Twitter 长文
 twitter article 1234567890
