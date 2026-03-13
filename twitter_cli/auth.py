@@ -23,7 +23,7 @@ from .constants import BEARER_TOKEN, get_user_agent
 logger = logging.getLogger(__name__)
 
 # Domains to match for Twitter cookies
-_TWITTER_DOMAINS = {"x.com", "twitter.com", ".x.com", ".twitter.com"}
+_TWITTER_DOMAINS = {"x.com", "twitter.com"}
 
 
 def _is_twitter_domain(domain: str) -> bool:

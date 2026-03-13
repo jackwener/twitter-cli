@@ -16,20 +16,8 @@ class TwitterError(RuntimeError):
     """Base exception for twitter-cli errors."""
 
 
-class AuthenticationError(TwitterError):
-    """Raised when cookies are missing, expired, or invalid."""
-
-
-class RateLimitError(TwitterError):
-    """Raised when Twitter rate limits the request (HTTP 429)."""
-
-
 class NotFoundError(TwitterError):
     """Raised when a user or tweet is not found."""
-
-
-class NetworkError(TwitterError):
-    """Raised when upstream network requests fail."""
 
 
 class QueryIdError(TwitterError):

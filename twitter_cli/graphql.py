@@ -129,13 +129,13 @@ def _scan_bundles(url_fetch_fn):
         logger.warning("Failed to scan JS bundles: %s", exc)
         return
 
+    op_pattern = re.compile(
+        r'queryId:\s*"([A-Za-z0-9_-]+)"[^}]{0,200}'
+        r'operationName:\s*"([^"]+)"'
+    )
     for script_url in script_urls:
         try:
             bundle = url_fetch_fn(script_url)
-            op_pattern = re.compile(
-                r'queryId:\s*"([A-Za-z0-9_-]+)"[^}]{0,200}'
-                r'operationName:\s*"([^"]+)"'
-            )
             for match in op_pattern.finditer(bundle):
                 query_id, operation_name = match.group(1), match.group(2)
                 _cached_query_ids.setdefault(operation_name, query_id)

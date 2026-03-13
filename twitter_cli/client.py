@@ -11,7 +11,7 @@ import os
 import random
 import time
 import urllib.parse
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import bs4
 from curl_cffi import requests as _cffi_requests
@@ -56,7 +56,7 @@ from .parser import (
 )
 
 if TYPE_CHECKING:
-    from typing import Dict, List, Optional, Set, Tuple  # noqa: F401
+    from typing import Callable, Dict, List, Optional, Set, Tuple  # noqa: F401
 
     from .models import Tweet  # noqa: F401
 
@@ -64,8 +64,6 @@ logger = logging.getLogger(__name__)
 
 # Shared curl_cffi session (single-threaded CLI)
 _cffi_session = None
-
-TimelineInstructionGetter = Callable[[Any], Any]
 
 # Hard ceiling to prevent accidental massive fetches
 _ABSOLUTE_MAX_COUNT = 500
@@ -219,22 +217,10 @@ class TwitterClient:
         if not result:
             raise NotFoundError("User @%s not found" % screen_name)
 
-        legacy = result.get("legacy", {})
-        return UserProfile(
-            id=result.get("rest_id", ""),
-            name=legacy.get("name", ""),
-            screen_name=legacy.get("screen_name", screen_name),
-            bio=legacy.get("description", ""),
-            location=legacy.get("location", ""),
-            url=_deep_get(legacy, "entities", "url", "urls", 0, "expanded_url") or "",
-            followers_count=_parse_int(legacy.get("followers_count"), 0),
-            following_count=_parse_int(legacy.get("friends_count"), 0),
-            tweets_count=_parse_int(legacy.get("statuses_count"), 0),
-            likes_count=_parse_int(legacy.get("favourites_count"), 0),
-            verified=bool(result.get("is_blue_verified") or legacy.get("verified", False)),
-            profile_image_url=legacy.get("profile_image_url_https", ""),
-            created_at=legacy.get("created_at", ""),
-        )
+        profile = parse_user_result(result)
+        if not profile:
+            raise NotFoundError("User @%s not found" % screen_name)
+        return profile
 
     def fetch_user_tweets(self, user_id, count=20):
         # type: (str, int) -> List[Tweet]
@@ -486,6 +472,22 @@ class TwitterClient:
 
         return media_id
 
+    def _submit_tweet(self, variables, error_msg="Failed to create tweet"):
+        # type: (Dict[str, Any], str) -> str
+        """Submit a CreateTweet GraphQL mutation and return the new tweet ID."""
+        data = self._graphql_post("CreateTweet", variables, FEATURES)
+        self._write_delay()
+        result = _deep_get(data, "data", "create_tweet", "tweet_results", "result")
+        if result:
+            return result.get("rest_id", "")
+        raise TwitterAPIError(0, error_msg)
+
+    def _build_media_entities(self, media_ids):
+        # type: (Optional[List[str]]) -> list
+        if media_ids:
+            return [{"media_id": mid, "tagged_users": []} for mid in media_ids]
+        return []
+
     def create_tweet(self, text, reply_to_id=None, media_ids=None):
         # type: (str, Optional[str], Optional[List[str]]) -> str
         """Post a new tweet.  Returns the new tweet ID.
@@ -495,12 +497,9 @@ class TwitterClient:
             reply_to_id: Optional tweet ID to reply to.
             media_ids: Optional list of media IDs (from upload_media) to attach.
         """
-        media_entities = []
-        if media_ids:
-            media_entities = [{"media_id": mid, "tagged_users": []} for mid in media_ids]
         variables = {
             "tweet_text": text,
-            "media": {"media_entities": media_entities, "possibly_sensitive": False},
+            "media": {"media_entities": self._build_media_entities(media_ids), "possibly_sensitive": False},
             "semantic_annotation_ids": [],
             "dark_request": False,
         }  # type: Dict[str, Any]
@@ -509,12 +508,7 @@ class TwitterClient:
                 "in_reply_to_tweet_id": reply_to_id,
                 "exclude_reply_user_ids": [],
             }
-        data = self._graphql_post("CreateTweet", variables, FEATURES)
-        self._write_delay()
-        result = _deep_get(data, "data", "create_tweet", "tweet_results", "result")
-        if result:
-            return result.get("rest_id", "")
-        raise TwitterAPIError(0, "Failed to create tweet")
+        return self._submit_tweet(variables)
 
     def delete_tweet(self, tweet_id):
         # type: (str) -> bool
@@ -629,50 +623,38 @@ class TwitterClient:
             text: Commentary text.
             media_ids: Optional list of media IDs (from upload_media) to attach.
         """
-        media_entities = []
-        if media_ids:
-            media_entities = [{"media_id": mid, "tagged_users": []} for mid in media_ids]
         variables = {
             "tweet_text": text,
             "attachment_url": "https://x.com/i/status/%s" % tweet_id,
-            "media": {"media_entities": media_entities, "possibly_sensitive": False},
+            "media": {"media_entities": self._build_media_entities(media_ids), "possibly_sensitive": False},
             "semantic_annotation_ids": [],
             "dark_request": False,
         }
-        data = self._graphql_post("CreateTweet", variables, FEATURES)
+        return self._submit_tweet(variables, "Failed to create quote tweet")
+
+    def _friendship_action(self, user_id, action):
+        # type: (str, str) -> bool
+        """Follow or unfollow a user.  action is 'create' or 'destroy'."""
+        url = "https://x.com/i/api/1.1/friendships/%s.json" % action
+        body = {"user_id": user_id, "include_profile_interstitial_type": "1"}
+        headers = self._build_headers(url=url, method="POST")
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        session = _get_cffi_session()
+        response = session.post(url, headers=headers, data=body, timeout=30)
+        if response.status_code >= 400:
+            raise TwitterAPIError(response.status_code, "Failed to %s user" % action)
         self._write_delay()
-        result = _deep_get(data, "data", "create_tweet", "tweet_results", "result")
-        if result:
-            return result.get("rest_id", "")
-        raise TwitterAPIError(0, "Failed to create quote tweet")
+        return True
 
     def follow_user(self, user_id):
         # type: (str) -> bool
         """Follow a user by user ID.  Returns True on success."""
-        url = "https://x.com/i/api/1.1/friendships/create.json"
-        body = {"user_id": user_id, "include_profile_interstitial_type": "1"}
-        headers = self._build_headers(url=url, method="POST")
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-        session = _get_cffi_session()
-        response = session.post(url, headers=headers, data=body, timeout=30)
-        if response.status_code >= 400:
-            raise TwitterAPIError(response.status_code, "Failed to follow user")
-        self._write_delay()
-        return True
+        return self._friendship_action(user_id, "create")
 
     def unfollow_user(self, user_id):
         # type: (str) -> bool
         """Unfollow a user by user ID.  Returns True on success."""
-        url = "https://x.com/i/api/1.1/friendships/destroy.json"
-        body = {"user_id": user_id, "include_profile_interstitial_type": "1"}
-        headers = self._build_headers(url=url, method="POST")
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-        session = _get_cffi_session()
-        response = session.post(url, headers=headers, data=body, timeout=30)
-        if response.status_code >= 400:
-            raise TwitterAPIError(response.status_code, "Failed to unfollow user")
-        self._write_delay()
-        return True
+        return self._friendship_action(user_id, "destroy")
 
     # ── Internal: timeline / user list fetchers ──────────────────────
 

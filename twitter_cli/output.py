@@ -50,12 +50,8 @@ def structured_output_options(command: Callable) -> Callable:
     return command
 
 
-def emit_structured(data: Any, *, as_json: bool, as_yaml: bool) -> bool:
-    """Emit structured output and return True when used."""
-    fmt = default_structured_format(as_json=as_json, as_yaml=as_yaml)
-    if not fmt:
-        return False
-    payload = _normalize_success_payload(data)
+def _emit_payload(payload: Any, fmt: str) -> None:
+    """Serialize and echo a payload as JSON or YAML."""
     if fmt == "json":
         click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
@@ -67,6 +63,14 @@ def emit_structured(data: Any, *, as_json: bool, as_yaml: bool) -> bool:
                 default_flow_style=False,
             )
         )
+
+
+def emit_structured(data: Any, *, as_json: bool, as_yaml: bool) -> bool:
+    """Emit structured output and return True when used."""
+    fmt = default_structured_format(as_json=as_json, as_yaml=as_yaml)
+    if not fmt:
+        return False
+    _emit_payload(_normalize_success_payload(data), fmt)
     return True
 
 
@@ -120,9 +124,5 @@ def emit_error(
     if fmt is None:
         return False
 
-    payload = error_payload(code, message, details=details)
-    if fmt == "json":
-        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
-    else:
-        click.echo(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False, default_flow_style=False))
+    _emit_payload(error_payload(code, message, details=details), fmt)
     return True

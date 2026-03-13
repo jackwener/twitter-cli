@@ -33,7 +33,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import inspect
 import sys
 import time
 import urllib.parse
@@ -57,7 +56,7 @@ from .formatter import (
     print_user_profile,
     print_user_table,
 )
-from .models import Tweet, UserProfile
+from .models import Tweet, UserProfile  # noqa: F401 (Tweet used in type comments)
 from .output import (
     default_structured_format,
     emit_error,
@@ -77,10 +76,6 @@ from .serialization import (
     users_to_data,
 )
 
-ConfigDict = Dict[str, Any]
-TweetList = List[Tweet]
-FetchTweets = Callable[[int], TweetList]
-OptionalPath = Optional[str]
 StructuredMode = Optional[str]
 WritePayload = Dict[str, Any]
 WriteOperation = Callable[[TwitterClient], WritePayload]
@@ -96,22 +91,8 @@ SEARCH_EXCLUDE_CHOICES = ["retweets", "replies", "links"]
 def _agent_user_profile(profile: UserProfile) -> dict:
     """Normalize a Twitter/X profile for structured agent output."""
     data = user_profile_to_dict(profile)
-    return {
-        "id": data["id"],
-        "name": data["name"],
-        "username": data["screenName"],
-        "screenName": data["screenName"],
-        "bio": data["bio"],
-        "location": data["location"],
-        "url": data["url"],
-        "followers": data["followers"],
-        "following": data["following"],
-        "tweets": data["tweets"],
-        "likes": data["likes"],
-        "verified": data["verified"],
-        "profileImageUrl": data["profileImageUrl"],
-        "createdAt": data["createdAt"],
-    }
+    data["username"] = data["screenName"]
+    return data
 
 
 def _setup_logging(verbose):
@@ -151,19 +132,6 @@ def _get_client(config=None, quiet=False):
         rate_limit_config,
         cookie_string=cookies.get("cookie_string"),
     )
-
-
-def _get_client_for_output(config=None, quiet=False):
-    # type: (Optional[Dict[str, Any]], bool) -> TwitterClient
-    """Call _get_client while staying compatible with monkeypatched legacy signatures."""
-    try:
-        signature = inspect.signature(_get_client)
-    except (TypeError, ValueError):
-        signature = None
-
-    if signature and "quiet" in signature.parameters:
-        return _get_client(config, quiet=quiet)
-    return _get_client(config)
 
 
 def _exit_with_error(exc):
@@ -414,7 +382,7 @@ def feed(ctx, feed_type, max_count, as_json, as_yaml, input_file, output_file, d
                 console.print("   Loaded %d tweets" % len(tweets))
         else:
             fetch_count = _resolve_configured_count(config, max_count)
-            client = _get_client_for_output(config, quiet=not rich_output)
+            client = _get_client(config, quiet=not rich_output)
             label = "following feed" if feed_type == "following" else "home timeline"
             if rich_output:
                 console.print("📡 Fetching %s (%d tweets)...\n" % (label, fetch_count))
@@ -501,7 +469,7 @@ def user(screen_name, as_json, as_yaml):
     config = load_config()
     try:
         rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
-        client = _get_client_for_output(config, quiet=not rich_output)
+        client = _get_client(config, quiet=not rich_output)
         if rich_output:
             console.print("👤 Fetching user @%s..." % screen_name)
         profile = client.fetch_user(screen_name)
@@ -528,7 +496,7 @@ def user_posts(ctx, screen_name, max_count, as_json, as_yaml, output_file, full_
     config = load_config()
     def _run():
         rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
-        client = _get_client_for_output(config, quiet=not rich_output)
+        client = _get_client(config, quiet=not rich_output)
         if rich_output:
             console.print("👤 Fetching @%s's profile..." % screen_name)
         profile = client.fetch_user(screen_name)
@@ -613,7 +581,7 @@ def search(ctx, query, product, from_user, to_user, lang, since, until, has, exc
     config = load_config()
     def _run():
         rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
-        client = _get_client_for_output(config, quiet=not rich_output)
+        client = _get_client(config, quiet=not rich_output)
         _fetch_and_display(
             lambda count: client.fetch_search(composed_query, count, product),
             "'%s' (%s)" % (composed_query, product), "🔍", max_count, as_json, as_yaml, output_file, do_filter, config,
@@ -642,7 +610,7 @@ def likes(ctx, screen_name, max_count, as_json, as_yaml, output_file, do_filter,
     config = load_config()
     def _run():
         rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
-        client = _get_client_for_output(config, quiet=not rich_output)
+        client = _get_client(config, quiet=not rich_output)
         if rich_output:
             console.print("👤 Fetching @%s's profile..." % screen_name)
         profile = client.fetch_user(screen_name)
@@ -688,7 +656,7 @@ def tweet(ctx, tweet_id, max_count, full_text, as_json, as_yaml):
     config = load_config()
     rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
     try:
-        client = _get_client_for_output(config, quiet=not rich_output)
+        client = _get_client(config, quiet=not rich_output)
         if rich_output:
             console.print("🐦 Fetching tweet %s...\n" % tweet_id)
         start = time.time()
@@ -733,7 +701,7 @@ def article(ctx, tweet_id, as_json, as_yaml, as_markdown, output_file):
     config = load_config()
     rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=False) and not as_markdown
     try:
-        client = _get_client_for_output(config, quiet=not rich_output)
+        client = _get_client(config, quiet=not rich_output)
         if rich_output:
             console.print("📰 Fetching article %s...\n" % tweet_id)
         start = time.time()
@@ -793,7 +761,7 @@ def followers(screen_name, max_count, as_json, as_yaml):
     config = load_config()
     try:
         rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
-        client = _get_client_for_output(config, quiet=not rich_output)
+        client = _get_client(config, quiet=not rich_output)
         if rich_output:
             console.print("👤 Fetching @%s's profile..." % screen_name)
         profile = client.fetch_user(screen_name)
@@ -826,7 +794,7 @@ def following(screen_name, max_count, as_json, as_yaml):
     config = load_config()
     try:
         rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
-        client = _get_client_for_output(config, quiet=not rich_output)
+        client = _get_client(config, quiet=not rich_output)
         if rich_output:
             console.print("👤 Fetching @%s's profile..." % screen_name)
         profile = client.fetch_user(screen_name)
@@ -999,7 +967,7 @@ def status(as_json, as_yaml):
     config = load_config()
     try:
         rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
-        client = _get_client_for_output(config, quiet=not rich_output)
+        client = _get_client(config, quiet=not rich_output)
         profile = client.fetch_me()
     except RuntimeError as exc:
         payload = error_payload("not_authenticated", str(exc))
@@ -1024,7 +992,7 @@ def whoami(as_json, as_yaml):
     config = load_config()
     try:
         rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
-        client = _get_client_for_output(config, quiet=not rich_output)
+        client = _get_client(config, quiet=not rich_output)
         if rich_output:
             console.print("👤 Fetching current user...")
         profile = client.fetch_me()
