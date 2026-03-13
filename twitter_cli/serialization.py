@@ -191,15 +191,6 @@ def user_profile_to_dict(user: UserProfile) -> Dict[str, Any]:
     }
 
 
-def users_to_json(users: Iterable[UserProfile]) -> str:
-    """Serialize UserProfile objects to pretty JSON."""
-    return json.dumps(
-        [user_profile_to_dict(user) for user in users],
-        ensure_ascii=False,
-        indent=2,
-    )
-
-
 def users_to_data(users: Iterable[UserProfile]) -> List[Dict[str, Any]]:
     """Serialize UserProfile objects to Python dicts."""
     return [user_profile_to_dict(user) for user in users]

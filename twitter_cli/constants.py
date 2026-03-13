@@ -77,7 +77,7 @@ def get_accept_language():
     tag = _get_locale_tag()
     language = tag.split("-", 1)[0] or "en"
     if tag == language:
-        return "%s,%s;q=0.9,en;q=0.8" % (tag, language)
+        return "%s;q=0.9,en;q=0.8" % tag
     return "%s,%s;q=0.9,en;q=0.8" % (tag, language)
 
 
@@ -116,13 +116,5 @@ def get_sec_ch_ua_platform_version():
 
 # Static Client Hints
 SEC_CH_UA_MOBILE = "?0"
-SEC_CH_UA_PLATFORM = get_sec_ch_ua_platform()
-SEC_CH_UA_ARCH = get_sec_ch_ua_arch()
 SEC_CH_UA_BITNESS = '"64"'
 SEC_CH_UA_MODEL = '""'
-SEC_CH_UA_PLATFORM_VERSION = get_sec_ch_ua_platform_version()
-
-# Legacy aliases — modules that import these get the default value.
-# _build_headers() should use get_user_agent() / get_sec_ch_ua() instead.
-USER_AGENT = get_user_agent()
-SEC_CH_UA = get_sec_ch_ua()

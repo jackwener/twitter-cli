@@ -12,7 +12,8 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "confirm": True,
     "fetch": {
         "count": 50,
     },
@@ -97,6 +98,8 @@ def _normalize_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize shape and value types."""
     normalized = copy.deepcopy(DEFAULT_CONFIG)
     merged = _deep_merge(normalized, config)
+
+    merged["confirm"] = bool(merged.get("confirm", True))
 
     fetch = merged.get("fetch")
     if not isinstance(fetch, dict):
