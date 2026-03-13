@@ -60,11 +60,13 @@ from .models import Tweet, UserProfile  # noqa: F401 (Tweet used in type comment
 from .output import (
     default_structured_format,
     emit_error,
+    emit_payload,
     emit_structured,
     error_payload,
     structured_output_options,
     success_payload,
     use_rich_output,
+    write_command_options,
 )
 from .serialization import (
     tweet_to_dict,
@@ -249,6 +251,18 @@ def _handle_structured_runtime_error(
     _exit_with_error(exc)
 
 
+def _is_interactive() -> bool:
+    """Return True when stdin is a TTY (interactive terminal)."""
+    return sys.stdin.isatty()
+
+
+def _render_preview(preview: Dict[str, Any]) -> None:
+    """Print plain-text preview for confirmation or dry-run."""
+    for key, value in preview.items():
+        label = key.replace("_", " ").title()
+        click.echo("%s: %s" % (label, value))
+
+
 def _run_write_command(
     *,
     as_json: bool,
@@ -257,10 +271,38 @@ def _run_write_command(
     progress_lines: Optional[List[str]] = None,
     success_lines: Optional[List[str]] = None,
     error_details: Optional[Dict[str, Any]] = None,
+    dry_run: bool = False,
+    dry_run_payload: Optional[Dict[str, Any]] = None,
+    preview: Optional[Dict[str, Any]] = None,
+    skip_confirm: bool = False,
 ) -> Optional[WritePayload]:
+    config = load_config()
     mode = _structured_mode(as_json=as_json, as_yaml=as_yaml)
+
+    if dry_run:
+        payload = dry_run_payload or {}
+        if mode:
+            emit_payload(payload, mode)
+        else:
+            click.echo("--- Dry Run ---")
+            _render_preview(payload)
+        return None
+
+    if (
+        preview is not None
+        and _is_interactive()
+        and not skip_confirm
+        and config.get("confirm", True)
+        and mode is None
+    ):
+        click.echo("--- Preview ---")
+        _render_preview(preview)
+        if not click.confirm("Send?", default=True):
+            click.echo("Cancelled.")
+            return None
+
     try:
-        client = _get_client(load_config())
+        client = _get_client(config)
         _print_lines(progress_lines or [], mode)
         payload = operation(client)
     except RuntimeError as exc:
@@ -836,8 +878,8 @@ def _upload_images(client, image_paths, rich_output=True):
     return media_ids
 
 
-def _write_action(emoji, action_desc, client_method, tweet_id, as_json=False, as_yaml=False):
-    # type: (str, str, str, str, bool, bool) -> None
+def _write_action(emoji, action_desc, client_method, tweet_id, as_json=False, as_yaml=False, dry_run=False, skip_confirm=False):
+    # type: (str, str, str, str, bool, bool, bool, bool) -> None
     """Generic write action helper to reduce CLI command boilerplate.
 
     Emits structured JSON/YAML when piped or when OUTPUT env is set.
@@ -855,6 +897,9 @@ def _write_action(emoji, action_desc, client_method, tweet_id, as_json=False, as
         progress_lines=["%s %s %s..." % (emoji, action_desc, tweet_id)],
         success_lines=["[green]✅ Done.[/green]"],
         error_details={"action": action_name, "id": tweet_id},
+        dry_run=dry_run,
+        dry_run_payload={"action": action_name, "id": tweet_id},
+        skip_confirm=skip_confirm,
     )
 
 
@@ -863,8 +908,9 @@ def _write_action(emoji, action_desc, client_method, tweet_id, as_json=False, as
 @click.option("--reply-to", "-r", default=None, help="Reply to this tweet ID.")
 @click.option("--image", "-i", "images", multiple=True, type=click.Path(exists=True), help="Attach image (up to 4). Repeatable.")
 @structured_output_options
-def post(text, reply_to, images, as_json, as_yaml):
-    # type: (str, Optional[str], tuple, bool, bool) -> None
+@write_command_options
+def post(text, reply_to, images, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, Optional[str], tuple, bool, bool, bool, bool) -> None
     """Post a new tweet. TEXT is the tweet content.
 
     Attach images with --image / -i (up to 4):
@@ -875,6 +921,18 @@ def post(text, reply_to, images, as_json, as_yaml):
     """
     action = "Replying to %s" % reply_to if reply_to else "Posting tweet"
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
+
+    dry_run_payload: Dict[str, Any] = {"action": "post", "text": text}
+    if reply_to:
+        dry_run_payload["replyTo"] = reply_to
+    if images:
+        dry_run_payload["images"] = list(images)
+
+    preview: Dict[str, Any] = {"text": text}
+    if reply_to:
+        preview["reply_to"] = reply_to
+    if images:
+        preview["images"] = ", ".join(images)
 
     def operation(client: TwitterClient) -> WritePayload:
         media_ids = _upload_images(client, images, rich_output=rich_output)
@@ -888,6 +946,10 @@ def post(text, reply_to, images, as_json, as_yaml):
         progress_lines=["✏️  %s..." % action],
         success_lines=["[green]✅ Tweet posted![/green]"],
         error_details={"action": "post", "replyTo": reply_to},
+        dry_run=dry_run,
+        dry_run_payload=dry_run_payload,
+        preview=preview,
+        skip_confirm=skip_confirm,
     )
     if payload and not _structured_mode(as_json=as_json, as_yaml=as_yaml):
         console.print("🔗 %s" % payload["url"])
@@ -898,11 +960,21 @@ def post(text, reply_to, images, as_json, as_yaml):
 @click.argument("text")
 @click.option("--image", "-i", "images", multiple=True, type=click.Path(exists=True), help="Attach image (up to 4). Repeatable.")
 @structured_output_options
-def reply_tweet(tweet_id, text, images, as_json, as_yaml):
-    # type: (str, str, tuple, bool, bool) -> None
+@write_command_options
+def reply_tweet(tweet_id, text, images, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, str, tuple, bool, bool, bool, bool) -> None
     """Reply to a tweet. TWEET_ID is the tweet to reply to, TEXT is the reply content."""
     tweet_id = _normalize_tweet_id(tweet_id)
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
+
+    dry_run_payload: Dict[str, Any] = {"action": "reply", "text": text, "replyTo": tweet_id}
+    if images:
+        dry_run_payload["images"] = list(images)
+
+    preview: Dict[str, Any] = {"text": text, "reply_to": tweet_id}
+    if images:
+        preview["images"] = ", ".join(images)
+
     def operation(client: TwitterClient) -> WritePayload:
         media_ids = _upload_images(client, images, rich_output=rich_output)
         new_id = client.create_tweet(text, reply_to_id=tweet_id, media_ids=media_ids or None)
@@ -921,6 +993,10 @@ def reply_tweet(tweet_id, text, images, as_json, as_yaml):
         progress_lines=["💬 Replying to %s..." % tweet_id],
         success_lines=["[green]✅ Reply posted![/green]"],
         error_details={"action": "reply", "replyTo": tweet_id},
+        dry_run=dry_run,
+        dry_run_payload=dry_run_payload,
+        preview=preview,
+        skip_confirm=skip_confirm,
     )
     if payload and not _structured_mode(as_json=as_json, as_yaml=as_yaml):
         console.print("🔗 %s" % payload["url"])
@@ -931,11 +1007,21 @@ def reply_tweet(tweet_id, text, images, as_json, as_yaml):
 @click.argument("text")
 @click.option("--image", "-i", "images", multiple=True, type=click.Path(exists=True), help="Attach image (up to 4). Repeatable.")
 @structured_output_options
-def quote_tweet(tweet_id, text, images, as_json, as_yaml):
-    # type: (str, str, tuple, bool, bool) -> None
+@write_command_options
+def quote_tweet(tweet_id, text, images, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, str, tuple, bool, bool, bool, bool) -> None
     """Quote-tweet a tweet. TWEET_ID is the tweet to quote, TEXT is the commentary."""
     tweet_id = _normalize_tweet_id(tweet_id)
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
+
+    dry_run_payload: Dict[str, Any] = {"action": "quote", "text": text, "quotedId": tweet_id}
+    if images:
+        dry_run_payload["images"] = list(images)
+
+    preview: Dict[str, Any] = {"text": text, "quoted_id": tweet_id}
+    if images:
+        preview["images"] = ", ".join(images)
+
     def operation(client: TwitterClient) -> WritePayload:
         media_ids = _upload_images(client, images, rich_output=rich_output)
         new_id = client.quote_tweet(tweet_id, text, media_ids=media_ids or None)
@@ -954,9 +1040,13 @@ def quote_tweet(tweet_id, text, images, as_json, as_yaml):
         progress_lines=["🔄 Quoting tweet %s..." % tweet_id],
         success_lines=["[green]✅ Quote tweet posted![/green]"],
         error_details={"action": "quote", "quotedId": tweet_id},
+        dry_run=dry_run,
+        dry_run_payload=dry_run_payload,
+        preview=preview,
+        skip_confirm=skip_confirm,
     )
     if payload and not _structured_mode(as_json=as_json, as_yaml=as_yaml):
-        console.print("🔗 %s" % payload["url"]) 
+        console.print("🔗 %s" % payload["url"])
 
 
 @cli.command(name="status")
@@ -1009,10 +1099,21 @@ def whoami(as_json, as_yaml):
 @cli.command(name="follow")
 @click.argument("screen_name")
 @structured_output_options
-def follow_user(screen_name, as_json, as_yaml):
-    # type: (str, bool, bool) -> None
+@write_command_options
+def follow_user(screen_name, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, bool, bool, bool, bool) -> None
     """Follow a user. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
+
+    if dry_run:
+        _run_write_command(
+            as_json=as_json,
+            as_yaml=as_yaml,
+            operation=lambda c: {},
+            dry_run=True,
+            dry_run_payload={"action": "follow", "screenName": screen_name},
+        )
+        return
 
     def operation(client: TwitterClient) -> WritePayload:
         user_id = client.resolve_user_id(screen_name)
@@ -1026,16 +1127,28 @@ def follow_user(screen_name, as_json, as_yaml):
         progress_lines=["👤 Looking up @%s..." % screen_name, "➕ Following @%s..." % screen_name],
         success_lines=["[green]✅ Now following @%s[/green]" % screen_name],
         error_details={"action": "follow", "screenName": screen_name},
+        skip_confirm=skip_confirm,
     )
 
 
 @cli.command(name="unfollow")
 @click.argument("screen_name")
 @structured_output_options
-def unfollow_user(screen_name, as_json, as_yaml):
-    # type: (str, bool, bool) -> None
+@write_command_options
+def unfollow_user(screen_name, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, bool, bool, bool, bool) -> None
     """Unfollow a user. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
+
+    if dry_run:
+        _run_write_command(
+            as_json=as_json,
+            as_yaml=as_yaml,
+            operation=lambda c: {},
+            dry_run=True,
+            dry_run_payload={"action": "unfollow", "screenName": screen_name},
+        )
+        return
 
     def operation(client: TwitterClient) -> WritePayload:
         user_id = client.resolve_user_id(screen_name)
@@ -1049,6 +1162,7 @@ def unfollow_user(screen_name, as_json, as_yaml):
         progress_lines=["👤 Looking up @%s..." % screen_name, "➖ Unfollowing @%s..." % screen_name],
         success_lines=["[green]✅ Unfollowed @%s[/green]" % screen_name],
         error_details={"action": "unfollow", "screenName": screen_name},
+        skip_confirm=skip_confirm,
     )
 
 
@@ -1056,82 +1170,91 @@ def unfollow_user(screen_name, as_json, as_yaml):
 @click.argument("tweet_id")
 @click.confirmation_option(prompt="Are you sure you want to delete this tweet?")
 @structured_output_options
-def delete_tweet(tweet_id, as_json, as_yaml):
-    # type: (str, bool, bool) -> None
+@click.option("--dry-run", "dry_run", is_flag=True, help="Preview without executing.")
+def delete_tweet(tweet_id, as_json, as_yaml, dry_run):
+    # type: (str, bool, bool, bool) -> None
     """Delete a tweet. TWEET_ID is the numeric tweet ID."""
-    _write_action("🗑️", "Deleting tweet", "delete_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml)
+    _write_action("🗑️", "Deleting tweet", "delete_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml, dry_run=dry_run)
 
 
 @cli.command()
 @click.argument("tweet_id")
 @structured_output_options
-def like(tweet_id, as_json, as_yaml):
-    # type: (str, bool, bool) -> None
+@write_command_options
+def like(tweet_id, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, bool, bool, bool, bool) -> None
     """Like a tweet. TWEET_ID is the numeric tweet ID."""
-    _write_action("❤️", "Liking tweet", "like_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml)
+    _write_action("❤️", "Liking tweet", "like_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml, dry_run=dry_run, skip_confirm=skip_confirm)
 
 
 @cli.command()
 @click.argument("tweet_id")
 @structured_output_options
-def unlike(tweet_id, as_json, as_yaml):
-    # type: (str, bool, bool) -> None
+@write_command_options
+def unlike(tweet_id, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, bool, bool, bool, bool) -> None
     """Unlike a tweet. TWEET_ID is the numeric tweet ID."""
-    _write_action("💔", "Unliking tweet", "unlike_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml)
+    _write_action("💔", "Unliking tweet", "unlike_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml, dry_run=dry_run, skip_confirm=skip_confirm)
 
 
 @cli.command()
 @click.argument("tweet_id")
 @structured_output_options
-def retweet(tweet_id, as_json, as_yaml):
-    # type: (str, bool, bool) -> None
+@write_command_options
+def retweet(tweet_id, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, bool, bool, bool, bool) -> None
     """Retweet a tweet. TWEET_ID is the numeric tweet ID."""
-    _write_action("🔄", "Retweeting", "retweet", tweet_id, as_json=as_json, as_yaml=as_yaml)
+    _write_action("🔄", "Retweeting", "retweet", tweet_id, as_json=as_json, as_yaml=as_yaml, dry_run=dry_run, skip_confirm=skip_confirm)
 
 
 @cli.command()
 @click.argument("tweet_id")
 @structured_output_options
-def unretweet(tweet_id, as_json, as_yaml):
-    # type: (str, bool, bool) -> None
+@write_command_options
+def unretweet(tweet_id, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, bool, bool, bool, bool) -> None
     """Undo a retweet. TWEET_ID is the numeric tweet ID."""
-    _write_action("🔄", "Undoing retweet", "unretweet", tweet_id, as_json=as_json, as_yaml=as_yaml)
+    _write_action("🔄", "Undoing retweet", "unretweet", tweet_id, as_json=as_json, as_yaml=as_yaml, dry_run=dry_run, skip_confirm=skip_confirm)
 
 
 @cli.command()
 @click.argument("tweet_id")
 @structured_output_options
-def favorite(tweet_id, as_json, as_yaml):
-    # type: (str, bool, bool) -> None
+@write_command_options
+def favorite(tweet_id, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, bool, bool, bool, bool) -> None
     """Bookmark (favorite) a tweet. TWEET_ID is the numeric tweet ID."""
-    _write_action("🔖", "Bookmarking tweet", "bookmark_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml)
+    _write_action("🔖", "Bookmarking tweet", "bookmark_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml, dry_run=dry_run, skip_confirm=skip_confirm)
 
 
 @cli.command()
 @click.argument("tweet_id")
 @structured_output_options
-def bookmark(tweet_id, as_json, as_yaml):
-    # type: (str, bool, bool) -> None
+@write_command_options
+def bookmark(tweet_id, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, bool, bool, bool, bool) -> None
     """Bookmark a tweet. TWEET_ID is the numeric tweet ID."""
-    _write_action("🔖", "Bookmarking tweet", "bookmark_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml)
+    _write_action("🔖", "Bookmarking tweet", "bookmark_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml, dry_run=dry_run, skip_confirm=skip_confirm)
 
 
 @cli.command()
 @click.argument("tweet_id")
 @structured_output_options
-def unfavorite(tweet_id, as_json, as_yaml):
-    # type: (str, bool, bool) -> None
+@write_command_options
+def unfavorite(tweet_id, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, bool, bool, bool, bool) -> None
     """Remove a tweet from bookmarks (unfavorite). TWEET_ID is the numeric tweet ID."""
-    _write_action("🔖", "Removing bookmark", "unbookmark_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml)
+    _write_action("🔖", "Removing bookmark", "unbookmark_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml, dry_run=dry_run, skip_confirm=skip_confirm)
 
 
 @cli.command()
 @click.argument("tweet_id")
 @structured_output_options
-def unbookmark(tweet_id, as_json, as_yaml):
-    # type: (str, bool, bool) -> None
+@write_command_options
+def unbookmark(tweet_id, as_json, as_yaml, dry_run, skip_confirm):
+    # type: (str, bool, bool, bool, bool) -> None
     """Remove a tweet from bookmarks. TWEET_ID is the numeric tweet ID."""
-    _write_action("🔖", "Removing bookmark", "unbookmark_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml)
+    _write_action("🔖", "Removing bookmark", "unbookmark_tweet", tweet_id, as_json=as_json, as_yaml=as_yaml, dry_run=dry_run, skip_confirm=skip_confirm)
 
 
 @cli.command(name="doctor")

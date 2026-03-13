@@ -42,6 +42,8 @@ A terminal-first CLI for Twitter/X: read timelines, bookmarks, and user profiles
 - Retweet / Unretweet: manage retweets
 - Bookmark: bookmark/unbookmark (`favorite/unfavorite` kept as compatibility aliases)
 - Write commands also support explicit `--json` / `--yaml` output now
+- `--dry-run`: preview what would be sent without executing (all write commands)
+- Interactive confirmation: post/reply/quote show a preview + `Send? [Y/n]` prompt in TTY mode (skip with `--yes` / `-y` or `confirm: false` in config)
 
 **Auth & Anti-Detection:**
 - Cookie auth: use browser cookies or environment variables
@@ -160,6 +162,16 @@ twitter unretweet 1234567890
 twitter bookmark 1234567890
 twitter unbookmark 1234567890
 twitter follow elonmusk --json
+
+# Dry-run (preview without executing, no auth needed)
+twitter post "test" --dry-run
+twitter post "test" --dry-run --json
+twitter like 123 --dry-run --yaml
+twitter follow alice --dry-run
+
+# Confirmation control
+twitter post "test"           # Shows preview + Send? [Y/n] in TTY
+twitter post "test" --yes     # Skip confirmation prompt
 ```
 
 ### Authentication
@@ -198,6 +210,9 @@ Using a proxy can help reduce IP-based rate limiting risks.
 Create `config.yaml` in your working directory:
 
 ```yaml
+# Prompt for confirmation before posting/replying/quoting (TTY only)
+confirm: true
+
 fetch:
   count: 50
 
@@ -375,6 +390,8 @@ After installation, OpenClaw can call `twitter-cli` commands directly.
 - 转推 / 取消转推
 - 书签 / 取消书签：bookmark/unbookmark（保留 `favorite/unfavorite` 兼容别名）
 - 写操作现在也显式支持 `--json` / `--yaml`
+- `--dry-run`：预览将要发送的内容，不实际执行（所有写操作均支持）
+- 交互确认：发推/回复/引用会在 TTY 模式下显示预览 + `Send? [Y/n]` 提示（可用 `--yes` / `-y` 或 config 中 `confirm: false` 跳过）
 
 **认证与反风控:**
 - Cookie 认证：支持环境变量和浏览器自动提取
@@ -463,6 +480,16 @@ twitter unretweet 1234567890
 twitter bookmark 1234567890
 twitter unbookmark 1234567890
 twitter follow elonmusk --json
+
+# 试运行（预览不执行，无需认证）
+twitter post "测试" --dry-run
+twitter post "测试" --dry-run --json
+twitter like 123 --dry-run --yaml
+twitter follow alice --dry-run
+
+# 确认控制
+twitter post "测试"           # TTY 下显示预览 + Send? [Y/n]
+twitter post "测试" --yes     # 跳过确认提示
 ```
 
 ### 认证说明

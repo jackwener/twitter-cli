@@ -41,3 +41,17 @@ def test_load_config_does_not_mutate_defaults(tmp_path: Path) -> None:
     config = load_config(str(tmp_path / "missing-config.yaml"))
     config["filter"]["weights"]["likes"] = 999
     assert DEFAULT_CONFIG["filter"]["weights"]["likes"] == 1.0
+
+
+def test_confirm_config_default(tmp_path: Path) -> None:
+    """confirm defaults to True."""
+    config = load_config(str(tmp_path / "missing-config.yaml"))
+    assert config["confirm"] is True
+
+
+def test_confirm_config_override(tmp_path: Path) -> None:
+    """confirm: false loads correctly."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("confirm: false\n", encoding="utf-8")
+    config = load_config(str(config_file))
+    assert config["confirm"] is False

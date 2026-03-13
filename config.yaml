@@ -1,3 +1,6 @@
+# Prompt for confirmation before posting/replying/quoting (TTY only)
+confirm: true
+
 fetch:
   count: 50
 
@@ -18,4 +21,4 @@ rateLimit:
   requestDelay: 1.5    # seconds between paginated requests
   maxRetries: 3        # retry count on 429 / rate-limit errors
   retryBaseDelay: 5.0  # base delay for exponential backoff (seconds)
-  maxCount: 200        # hard cap for single fetch
+  maxCount: 1000       # hard cap for single fetch

@@ -5,6 +5,8 @@ import pytest
 from rich.console import Console
 import yaml
 
+import json
+
 from twitter_cli.cli import cli
 from twitter_cli.formatter import article_to_markdown, print_tweet_table
 from twitter_cli.models import Author, Metrics, Tweet, UserProfile
@@ -538,3 +540,225 @@ def test_cli_compact_mode(tmp_path, tweet_factory) -> None:
     assert '"@alice"' in result.output
     # Compact output should NOT have full metrics keys
     assert '"metrics"' not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Dry-run & confirmation tests
+# ---------------------------------------------------------------------------
+
+
+def test_post_dry_run_json(monkeypatch) -> None:
+    """--dry-run --json prints payload without envelope, no client created."""
+    client_created = []
+    monkeypatch.setattr(
+        "twitter_cli.cli._get_client",
+        lambda config=None, quiet=False: client_created.append(1) or None,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["post", "hello world", "--dry-run", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["action"] == "post"
+    assert payload["text"] == "hello world"
+    assert "ok" not in payload  # no envelope
+    assert client_created == []  # no client created
+
+
+def test_post_dry_run_plain(monkeypatch) -> None:
+    """--dry-run in TTY prints '--- Dry Run ---' + fields."""
+    monkeypatch.setenv("OUTPUT", "rich")
+    monkeypatch.setattr(
+        "twitter_cli.cli._get_client",
+        lambda config=None, quiet=False: None,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["post", "hello world", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "--- Dry Run ---" in result.output
+    assert "Action: post" in result.output
+    assert "Text: hello world" in result.output
+
+
+def test_post_dry_run_with_images(monkeypatch, tmp_path) -> None:
+    """Images listed in dry-run output."""
+    img1 = tmp_path / "a.png"
+    img2 = tmp_path / "b.png"
+    img1.write_bytes(b"\x89PNG")
+    img2.write_bytes(b"\x89PNG")
+
+    monkeypatch.setenv("OUTPUT", "rich")
+    monkeypatch.setattr(
+        "twitter_cli.cli._get_client",
+        lambda config=None, quiet=False: None,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli, ["post", "pics", "--dry-run", "-i", str(img1), "-i", str(img2)]
+    )
+
+    assert result.exit_code == 0
+    assert "--- Dry Run ---" in result.output
+    assert "a.png" in result.output
+    assert "b.png" in result.output
+
+
+def test_like_dry_run_yaml(monkeypatch) -> None:
+    """--dry-run works on simple write actions via YAML."""
+    client_created = []
+    monkeypatch.setattr(
+        "twitter_cli.cli._get_client",
+        lambda config=None, quiet=False: client_created.append(1) or None,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["like", "456", "--dry-run", "--yaml"])
+
+    assert result.exit_code == 0
+    payload = yaml.safe_load(result.output)
+    assert payload["action"] == "liking_tweet"
+    assert payload["id"] == "456"
+    assert client_created == []
+
+
+def test_follow_dry_run(monkeypatch) -> None:
+    """--dry-run shows screenName, no user ID resolution."""
+    client_created = []
+    monkeypatch.setattr(
+        "twitter_cli.cli._get_client",
+        lambda config=None, quiet=False: client_created.append(1) or None,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["follow", "alice", "--dry-run", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["action"] == "follow"
+    assert payload["screenName"] == "alice"
+    assert client_created == []
+
+
+def test_post_confirmation_accept(monkeypatch) -> None:
+    """TTY + 'y' input → tweet posted."""
+    class FakeClient:
+        def create_tweet(self, text, reply_to_id=None, media_ids=None):
+            return "999"
+
+    monkeypatch.setenv("OUTPUT", "rich")
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda config_path=None: {"confirm": True, "fetch": {"count": 50}, "filter": {}, "rateLimit": {}},
+    )
+    monkeypatch.setattr("twitter_cli.cli._is_interactive", lambda: True)
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["post", "test message"], input="y\n")
+
+    assert result.exit_code == 0
+    assert "--- Preview ---" in result.output
+    assert "Send?" in result.output
+    assert "Tweet posted" in result.output
+
+
+def test_post_confirmation_decline(monkeypatch) -> None:
+    """TTY + 'n' input → cancelled, no API call."""
+    client_created = []
+    monkeypatch.setenv("OUTPUT", "rich")
+    monkeypatch.setattr(
+        "twitter_cli.cli._get_client",
+        lambda config=None, quiet=False: client_created.append(1) or None,
+    )
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda config_path=None: {"confirm": True, "fetch": {"count": 50}, "filter": {}, "rateLimit": {}},
+    )
+    monkeypatch.setattr("twitter_cli.cli._is_interactive", lambda: True)
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["post", "test message"], input="n\n")
+
+    assert result.exit_code == 0
+    assert "Cancelled." in result.output
+    assert client_created == []
+
+
+def test_post_yes_flag_skips_confirm(monkeypatch) -> None:
+    """--yes skips prompt."""
+    class FakeClient:
+        def create_tweet(self, text, reply_to_id=None, media_ids=None):
+            return "999"
+
+    monkeypatch.setenv("OUTPUT", "rich")
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda config_path=None: {"confirm": True, "fetch": {"count": 50}, "filter": {}, "rateLimit": {}},
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["post", "test message", "--yes"])
+
+    assert result.exit_code == 0
+    assert "Send?" not in result.output
+    assert "Tweet posted" in result.output
+
+
+def test_post_non_tty_auto_sends(monkeypatch) -> None:
+    """Non-TTY skips prompt automatically (structured mode)."""
+    class FakeClient:
+        def create_tweet(self, text, reply_to_id=None, media_ids=None):
+            return "999"
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["post", "test message", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert "Send?" not in result.output
+
+
+def test_post_config_confirm_false(monkeypatch) -> None:
+    """confirm: false in config skips prompt."""
+    class FakeClient:
+        def create_tweet(self, text, reply_to_id=None, media_ids=None):
+            return "999"
+
+    monkeypatch.setenv("OUTPUT", "rich")
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda config_path=None: {"confirm": False, "fetch": {"count": 50}, "filter": {}, "rateLimit": {}},
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["post", "test message"])
+
+    assert result.exit_code == 0
+    assert "Send?" not in result.output
+    assert "Tweet posted" in result.output
+
+
+def test_like_no_confirmation(monkeypatch) -> None:
+    """Simple write actions never prompt."""
+    class FakeClient:
+        def like_tweet(self, tweet_id):
+            return True
+
+    monkeypatch.setenv("OUTPUT", "rich")
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["like", "123"])
+
+    assert result.exit_code == 0
+    assert "Send?" not in result.output
+    assert "Done" in result.output
