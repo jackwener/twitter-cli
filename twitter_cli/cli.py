@@ -276,7 +276,6 @@ def _run_write_command(
     preview: Optional[Dict[str, Any]] = None,
     skip_confirm: bool = False,
 ) -> Optional[WritePayload]:
-    config = load_config()
     mode = _structured_mode(as_json=as_json, as_yaml=as_yaml)
 
     if dry_run:
@@ -287,6 +286,8 @@ def _run_write_command(
             click.echo("--- Dry Run ---")
             _render_preview(payload)
         return None
+
+    config = load_config()
 
     if (
         preview is not None
@@ -878,6 +879,22 @@ def _upload_images(client, image_paths, rich_output=True):
     return media_ids
 
 
+def _build_tweet_payloads(action, text, images, ref_key=None, ref_id=None):
+    # type: (str, str, tuple, Optional[str], Optional[str]) -> tuple
+    """Build dry_run_payload and preview dicts for post/reply/quote commands."""
+    dry_run_payload: Dict[str, Any] = {"action": action, "text": text}
+    preview: Dict[str, Any] = {"text": text}
+    if ref_key and ref_id:
+        dry_run_payload[ref_key] = ref_id
+        # Convert camelCase key to snake_case for preview display
+        preview_key = re.sub(r"([A-Z])", r"_\1", ref_key).lower()
+        preview[preview_key] = ref_id
+    if images:
+        dry_run_payload["images"] = list(images)
+        preview["images"] = ", ".join(images)
+    return dry_run_payload, preview
+
+
 def _write_action(emoji, action_desc, client_method, tweet_id, as_json=False, as_yaml=False, dry_run=False, skip_confirm=False):
     # type: (str, str, str, str, bool, bool, bool, bool) -> None
     """Generic write action helper to reduce CLI command boilerplate.
@@ -921,18 +938,9 @@ def post(text, reply_to, images, as_json, as_yaml, dry_run, skip_confirm):
     """
     action = "Replying to %s" % reply_to if reply_to else "Posting tweet"
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
-
-    dry_run_payload: Dict[str, Any] = {"action": "post", "text": text}
-    if reply_to:
-        dry_run_payload["replyTo"] = reply_to
-    if images:
-        dry_run_payload["images"] = list(images)
-
-    preview: Dict[str, Any] = {"text": text}
-    if reply_to:
-        preview["reply_to"] = reply_to
-    if images:
-        preview["images"] = ", ".join(images)
+    dry_run_payload, preview = _build_tweet_payloads(
+        "post", text, images, ref_key="replyTo" if reply_to else None, ref_id=reply_to,
+    )
 
     def operation(client: TwitterClient) -> WritePayload:
         media_ids = _upload_images(client, images, rich_output=rich_output)
@@ -966,14 +974,7 @@ def reply_tweet(tweet_id, text, images, as_json, as_yaml, dry_run, skip_confirm)
     """Reply to a tweet. TWEET_ID is the tweet to reply to, TEXT is the reply content."""
     tweet_id = _normalize_tweet_id(tweet_id)
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
-
-    dry_run_payload: Dict[str, Any] = {"action": "reply", "text": text, "replyTo": tweet_id}
-    if images:
-        dry_run_payload["images"] = list(images)
-
-    preview: Dict[str, Any] = {"text": text, "reply_to": tweet_id}
-    if images:
-        preview["images"] = ", ".join(images)
+    dry_run_payload, preview = _build_tweet_payloads("reply", text, images, ref_key="replyTo", ref_id=tweet_id)
 
     def operation(client: TwitterClient) -> WritePayload:
         media_ids = _upload_images(client, images, rich_output=rich_output)
@@ -1013,14 +1014,7 @@ def quote_tweet(tweet_id, text, images, as_json, as_yaml, dry_run, skip_confirm)
     """Quote-tweet a tweet. TWEET_ID is the tweet to quote, TEXT is the commentary."""
     tweet_id = _normalize_tweet_id(tweet_id)
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
-
-    dry_run_payload: Dict[str, Any] = {"action": "quote", "text": text, "quotedId": tweet_id}
-    if images:
-        dry_run_payload["images"] = list(images)
-
-    preview: Dict[str, Any] = {"text": text, "quoted_id": tweet_id}
-    if images:
-        preview["images"] = ", ".join(images)
+    dry_run_payload, preview = _build_tweet_payloads("quote", text, images, ref_key="quotedId", ref_id=tweet_id)
 
     def operation(client: TwitterClient) -> WritePayload:
         media_ids = _upload_images(client, images, rich_output=rich_output)
@@ -1105,16 +1099,6 @@ def follow_user(screen_name, as_json, as_yaml, dry_run, skip_confirm):
     """Follow a user. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
 
-    if dry_run:
-        _run_write_command(
-            as_json=as_json,
-            as_yaml=as_yaml,
-            operation=lambda c: {},
-            dry_run=True,
-            dry_run_payload={"action": "follow", "screenName": screen_name},
-        )
-        return
-
     def operation(client: TwitterClient) -> WritePayload:
         user_id = client.resolve_user_id(screen_name)
         client.follow_user(user_id)
@@ -1127,6 +1111,8 @@ def follow_user(screen_name, as_json, as_yaml, dry_run, skip_confirm):
         progress_lines=["👤 Looking up @%s..." % screen_name, "➕ Following @%s..." % screen_name],
         success_lines=["[green]✅ Now following @%s[/green]" % screen_name],
         error_details={"action": "follow", "screenName": screen_name},
+        dry_run=dry_run,
+        dry_run_payload={"action": "follow", "screenName": screen_name},
         skip_confirm=skip_confirm,
     )
 
@@ -1140,16 +1126,6 @@ def unfollow_user(screen_name, as_json, as_yaml, dry_run, skip_confirm):
     """Unfollow a user. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
 
-    if dry_run:
-        _run_write_command(
-            as_json=as_json,
-            as_yaml=as_yaml,
-            operation=lambda c: {},
-            dry_run=True,
-            dry_run_payload={"action": "unfollow", "screenName": screen_name},
-        )
-        return
-
     def operation(client: TwitterClient) -> WritePayload:
         user_id = client.resolve_user_id(screen_name)
         client.unfollow_user(user_id)
@@ -1162,6 +1138,8 @@ def unfollow_user(screen_name, as_json, as_yaml, dry_run, skip_confirm):
         progress_lines=["👤 Looking up @%s..." % screen_name, "➖ Unfollowing @%s..." % screen_name],
         success_lines=["[green]✅ Unfollowed @%s[/green]" % screen_name],
         error_details={"action": "unfollow", "screenName": screen_name},
+        dry_run=dry_run,
+        dry_run_payload={"action": "unfollow", "screenName": screen_name},
         skip_confirm=skip_confirm,
     )
 
