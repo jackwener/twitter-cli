@@ -737,10 +737,11 @@ def _print_show_hint():
 @click.argument("index", type=click.IntRange(1))
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max replies to fetch.")
 @click.option("--full-text", is_flag=True, help="Show full reply text in table output.")
+@click.option("--output", "-o", "output_file", type=str, default=None, help="Save tweet detail as JSON to file.")
 @structured_output_options
 @click.pass_context
-def show(ctx, index, max_count, full_text, as_json, as_yaml):
-    # type: (Any, int, Optional[int], bool, bool, bool) -> None
+def show(ctx, index, max_count, full_text, output_file, as_json, as_yaml):
+    # type: (Any, int, Optional[int], bool, Optional[str], bool, bool) -> None
     """View tweet #INDEX from the last feed/search results."""
     compact = ctx.obj.get("compact", False)
 
@@ -768,6 +769,11 @@ def show(ctx, index, max_count, full_text, as_json, as_yaml):
             console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
     except RuntimeError as exc:
         _exit_with_error(exc)
+
+    if output_file:
+        Path(output_file).write_text(tweets_to_json(tweets), encoding="utf-8")
+        if rich_output:
+            console.print("💾 Saved to %s\n" % output_file)
 
     _emit_tweet_detail(tweets, compact=compact, as_json=as_json, as_yaml=as_yaml, full_text=full_text)
 

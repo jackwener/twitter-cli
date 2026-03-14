@@ -353,9 +353,15 @@ def iter_cookie_files(browser_name):
     if sys.platform == "darwin":
         root = os.path.join(os.path.expanduser("~"), "Library", "Application Support", base_dir)
     elif sys.platform == "win32":
-        root = os.path.join(os.environ.get("LOCALAPPDATA", ""), base_dir, "User Data")
+        if browser_name == "edge":
+            root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data")
+        else:
+            root = os.path.join(os.environ.get("LOCALAPPDATA", ""), base_dir)
     else:
-        root = os.path.join(os.path.expanduser("~"), ".config", base_dir)
+        if browser_name == "edge":
+            root = os.path.join(os.path.expanduser("~"), ".config", "microsoft-edge")
+        else:
+            root = os.path.join(os.path.expanduser("~"), ".config", base_dir)
     if not os.path.isdir(root):
         return []
     env_profile = os.environ.get("TWITTER_CHROME_PROFILE", "").strip()

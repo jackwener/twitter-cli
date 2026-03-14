@@ -13,16 +13,22 @@ import pytest
 
 
 from twitter_cli.client import (
-    FEATURES,
     _best_chrome_target,
+    TwitterClient,
+)
+from twitter_cli.exceptions import TwitterAPIError
+from twitter_cli.graphql import (
+    FEATURES,
     _build_graphql_url,
+    _update_features_from_html,
+)
+from twitter_cli.parser import (
     _deep_get,
     _extract_cursor,
     _extract_media,
     _parse_int,
-    _update_features_from_html,
-    TwitterAPIError,
-    TwitterClient,
+    parse_tweet_result,
+    parse_user_result,
 )
 
 
@@ -339,9 +345,9 @@ class TestPaginationBehavior:
             return [MagicMock(id="tweet-1")], None
 
         client._graphql_get = _graphql_get
-        client._parse_timeline_response = _parse_timeline_response
 
-        tweets = client._fetch_timeline("HomeTimeline", 1, lambda data: data)
+        with patch('twitter_cli.client.parse_timeline_response', side_effect=_parse_timeline_response):
+            tweets = client._fetch_timeline("HomeTimeline", 1, lambda data: data)
 
         assert [tweet.id for tweet in tweets] == ["tweet-1"]
 
@@ -357,9 +363,9 @@ class TestPaginationBehavior:
             return {"page": len(calls)}
 
         client._graphql_get = _graphql_get
-        client._parse_timeline_response = lambda data, get_instructions: ([], "cursor-same")
 
-        tweets = client._fetch_timeline("HomeTimeline", 1, lambda data: data)
+        with patch('twitter_cli.client.parse_timeline_response', return_value=([], "cursor-same")):
+            tweets = client._fetch_timeline("HomeTimeline", 1, lambda data: data)
 
         assert tweets == []
         assert calls == [None, "cursor-same"]
@@ -401,9 +407,9 @@ class TestPaginationBehavior:
             ]
 
         client._graphql_get = _graphql_get
-        client._parse_user_result = _parse_user_result
 
-        users = client._fetch_user_list("Followers", "1", 1, _get_instructions)
+        with patch('twitter_cli.client.parse_user_result', side_effect=_parse_user_result):
+            users = client._fetch_user_list("Followers", "1", 1, _get_instructions)
 
         assert [user.screen_name for user in users] == ["alice"]
 
@@ -453,7 +459,7 @@ class TestParseTweetResult:
         client._ct_init_attempted = True
         client._client_transaction = None
 
-        tweet = client._parse_tweet_result(copy.deepcopy(self.SAMPLE_TWEET_RESULT))
+        tweet = parse_tweet_result(copy.deepcopy(self.SAMPLE_TWEET_RESULT))
         assert tweet is not None
         assert tweet.id == "1234567890"
         assert tweet.text == "Hello world! This is a test tweet."
@@ -475,7 +481,7 @@ class TestParseTweetResult:
         client._client_transaction = None
 
         result = {"__typename": "TweetTombstone"}
-        assert client._parse_tweet_result(result) is None
+        assert parse_tweet_result(result) is None
 
     @patch("twitter_cli.client._get_cffi_session")
     @patch("twitter_cli.client._gen_ct_headers", return_value={})
@@ -491,7 +497,7 @@ class TestParseTweetResult:
             "__typename": "TweetWithVisibilityResults",
             "tweet": copy.deepcopy(self.SAMPLE_TWEET_RESULT),
         }
-        tweet = client._parse_tweet_result(wrapped)
+        tweet = parse_tweet_result(wrapped)
         assert tweet is not None
         assert tweet.id == "1234567890"
 
@@ -505,7 +511,7 @@ class TestParseTweetResult:
         client._ct_init_attempted = True
         client._client_transaction = None
 
-        assert client._parse_tweet_result(self.SAMPLE_TWEET_RESULT, depth=3) is None
+        assert parse_tweet_result(self.SAMPLE_TWEET_RESULT, depth=3) is None
 
 
 # ── TwitterAPIError ──────────────────────────────────────────────────────
@@ -523,7 +529,7 @@ class TestTwitterAPIError:
 
 class TestParseUserResult:
     def test_coerces_count_fields_to_int(self):
-        user = TwitterClient._parse_user_result(
+        user = parse_user_result(
             {
                 "rest_id": "user-1",
                 "legacy": {

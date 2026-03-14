@@ -121,8 +121,3 @@ SEC_CH_UA_ARCH = get_sec_ch_ua_arch()
 SEC_CH_UA_BITNESS = '"64"'
 SEC_CH_UA_MODEL = '""'
 SEC_CH_UA_PLATFORM_VERSION = get_sec_ch_ua_platform_version()
-
-# Legacy aliases — modules that import these get the default value.
-# _build_headers() should use get_user_agent() / get_sec_ch_ua() instead.
-USER_AGENT = get_user_agent()
-SEC_CH_UA = get_sec_ch_ua()

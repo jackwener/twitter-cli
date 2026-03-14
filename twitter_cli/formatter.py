@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .models import Tweet, UserProfile
+from .timeutil import format_local_time, format_relative_time
 
 
 def format_number(n: int) -> str:
@@ -77,13 +78,15 @@ def print_tweet_table(
         text += "\n🔗 x.com/%s/status/%s" % (tweet.author.screen_name, tweet.id)
 
         # Stats
+        rel_time = format_relative_time(tweet.created_at)
         stats = (
-            "❤️ %s  🔄 %s\n💬 %s  👁️ %s"
+            "❤️ %s  🔄 %s\n💬 %s  👁️ %s\n🕐 %s"
             % (
                 format_number(tweet.metrics.likes),
                 format_number(tweet.metrics.retweets),
                 format_number(tweet.metrics.replies),
                 format_number(tweet.metrics.views),
+                rel_time,
             )
         )
 
@@ -138,9 +141,11 @@ def print_tweet_detail(tweet: Tweet, console: Optional[Console] = None) -> None:
             format_number(tweet.metrics.views),
         )
     )
+    local_time = format_local_time(tweet.created_at)
+    rel_time = format_relative_time(tweet.created_at)
     body_parts.append(
-        "🕐 %s · https://x.com/%s/status/%s"
-        % (tweet.created_at, tweet.author.screen_name, tweet.id)
+        "🕐 %s (%s) · https://x.com/%s/status/%s"
+        % (local_time, rel_time, tweet.author.screen_name, tweet.id)
     )
 
     console.print(Panel(
