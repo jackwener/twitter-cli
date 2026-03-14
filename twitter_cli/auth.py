@@ -27,7 +27,9 @@ _TWITTER_DOMAINS = {"x.com", "twitter.com", ".x.com", ".twitter.com"}
 
 
 def _is_twitter_domain(domain: str) -> bool:
-    return domain in _TWITTER_DOMAINS or domain.endswith(".x.com") or domain.endswith(".twitter.com")
+    return (
+        domain in _TWITTER_DOMAINS or domain.endswith(".x.com") or domain.endswith(".twitter.com")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +53,11 @@ def _diagnose_keychain_issues(diagnostics: List[str]) -> Optional[str]:
     if not any(kw in lowered for kw in _KEYCHAIN_ERROR_KEYWORDS):
         return None
 
-    is_ssh = bool(os.environ.get("SSH_CLIENT") or os.environ.get("SSH_TTY") or os.environ.get("SSH_CONNECTION"))
+    is_ssh = bool(
+        os.environ.get("SSH_CLIENT")
+        or os.environ.get("SSH_TTY")
+        or os.environ.get("SSH_CONNECTION")
+    )
 
     if sys.platform == "darwin":
         if is_ssh:
@@ -62,8 +68,8 @@ def _diagnose_keychain_issues(diagnostics: List[str]) -> Optional[str]:
             )
         return (
             "macOS Keychain permission denied — your terminal is not authorized to read browser cookie encryption keys.\n"
-            "  Fix: Open Keychain Access → search for \"<Browser> Safe Storage\" → Access Control → add your Terminal app.\n"
-            "  Or click \"Always Allow\" when the Keychain authorization popup appears."
+            '  Fix: Open Keychain Access → search for "<Browser> Safe Storage" → Access Control → add your Terminal app.\n'
+            '  Or click "Always Allow" when the Keychain authorization popup appears.'
         )
     # Linux: gnome-keyring / SecretStorage issues
     return (
@@ -87,7 +93,9 @@ def load_from_env() -> Optional[Dict[str, str]]:
     return None
 
 
-def verify_cookies(auth_token: str, ct0: str, cookie_string: Optional[str] = None) -> Dict[str, Any]:
+def verify_cookies(
+    auth_token: str, ct0: str, cookie_string: Optional[str] = None
+) -> Dict[str, Any]:
     """Verify cookies by calling a Twitter API endpoint.
 
     Uses curl_cffi for proper TLS fingerprint.
@@ -128,7 +136,8 @@ def verify_cookies(auth_token: str, ct0: str, cookie_string: Optional[str] = Non
             resp = session.get(url, headers=headers, timeout=5)
             if resp.status_code in (401, 403):
                 raise RuntimeError(
-                    "Cookie expired or invalid (HTTP %d). Please re-login to x.com in your browser." % resp.status_code
+                    "Cookie expired or invalid (HTTP %d). Please re-login to x.com in your browser."
+                    % resp.status_code
                 )
             if resp.status_code == 200:
                 data = resp.json()
@@ -136,7 +145,9 @@ def verify_cookies(auth_token: str, ct0: str, cookie_string: Optional[str] = Non
                 logger.debug("Cookie verification succeeded via %s", endpoint)
                 return {"screen_name": data.get("screen_name", "")}
             attempts.append("%s=%d" % (endpoint, resp.status_code))
-            logger.debug("Verification endpoint %s returned HTTP %d, trying next...", url, resp.status_code)
+            logger.debug(
+                "Verification endpoint %s returned HTTP %d, trying next...", url, resp.status_code
+            )
             continue
         except RuntimeError:
             raise
@@ -193,6 +204,36 @@ _CHROMIUM_BASE_DIRS: Dict[str, str] = {
     "brave": os.path.join("BraveSoftware", "Brave-Browser"),
 }
 
+# Default browser order for cookie extraction
+_DEFAULT_BROWSER_ORDER = ["arc", "chrome", "edge", "firefox", "brave"]
+
+
+def _get_browser_order() -> List[str]:
+    """Get browser order for cookie extraction.
+
+    If TWITTER_BROWSER is set, that browser is prioritized first.
+    Otherwise uses default order (arc -> chrome -> edge -> firefox -> brave).
+    """
+    env_browser = os.environ.get("TWITTER_BROWSER", "").strip().lower()
+    if not env_browser:
+        return _DEFAULT_BROWSER_ORDER.copy()
+
+    # Validate the browser name
+    valid_browsers = {"arc", "chrome", "edge", "firefox", "brave"}
+    if env_browser not in valid_browsers:
+        logger.warning(
+            "TWITTER_BROWSER='%s' is invalid. Must be one of: %s. Using default order.",
+            env_browser,
+            ", ".join(sorted(valid_browsers)),
+        )
+        return _DEFAULT_BROWSER_ORDER.copy()
+
+    # Put the specified browser first, then add the rest
+    order = [env_browser]
+    order.extend(b for b in _DEFAULT_BROWSER_ORDER if b != env_browser)
+    logger.debug("Using browser order from TWITTER_BROWSER: %s", order)
+    return order
+
 
 def _iter_chrome_cookie_files(browser_name: str) -> List[str]:
     """Return cookie file paths for all Chrome profiles.
@@ -208,7 +249,9 @@ def _iter_chrome_cookie_files(browser_name: str) -> List[str]:
         root = os.path.join(os.path.expanduser("~"), "Library", "Application Support", base_dir)
     elif sys.platform == "win32":
         if browser_name == "edge":
-            root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data")
+            root = os.path.join(
+                os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data"
+            )
         else:
             root = os.path.join(os.environ.get("LOCALAPPDATA", ""), base_dir)
     else:
@@ -262,17 +305,19 @@ def _extract_in_process() -> Tuple[Optional[Dict[str, str]], List[str]]:
         logger.debug("browser_cookie3 not installed, skipping in-process extraction")
         return None, ["browser-cookie3 not installed"]
 
-    browsers = [
-        ("arc", browser_cookie3.arc),
-        ("chrome", browser_cookie3.chrome),
-        ("edge", browser_cookie3.edge),
-        ("firefox", browser_cookie3.firefox),
-        ("brave", browser_cookie3.brave),
-    ]
+    browser_order = _get_browser_order()
+    browser_fn_map = {
+        "arc": browser_cookie3.arc,
+        "chrome": browser_cookie3.chrome,
+        "edge": browser_cookie3.edge,
+        "firefox": browser_cookie3.firefox,
+        "brave": browser_cookie3.brave,
+    }
     attempts: List[str] = []
     diagnostics: List[str] = []
 
-    for name, fn in browsers:
+    for name in browser_order:
+        fn = browser_fn_map[name]
         if name in _CHROMIUM_BASE_DIRS:
             # Chromium-based: iterate all profiles
             cookie_files = _iter_chrome_cookie_files(name)
@@ -285,7 +330,13 @@ def _extract_in_process() -> Tuple[Optional[Dict[str, str]], List[str]]:
                     attempts.append("%s=%s" % (name, type(e).__name__))
                     diagnostics.append("%s: %s" % (name, e))
                     continue
-                cookies = _extract_cookies_from_jar(jar, source="%s(in-process)" % name)
+                try:
+                    cookies = _extract_cookies_from_jar(jar, source="%s(in-process)" % name)
+                except Exception as e:
+                    logger.debug("%s cookie jar extraction failed: %s", name, e)
+                    attempts.append("%s=%s" % (name, type(e).__name__))
+                    diagnostics.append("%s: %s" % (name, e))
+                    continue
                 if cookies:
                     logger.info("Found cookies in %s (in-process, default)", name)
                     return cookies, diagnostics
@@ -301,7 +352,15 @@ def _extract_in_process() -> Tuple[Optional[Dict[str, str]], List[str]]:
                     attempts.append("%s[%s]=%s" % (name, profile_name, type(e).__name__))
                     diagnostics.append("%s[%s]: %s" % (name, profile_name, e))
                     continue
-                cookies = _extract_cookies_from_jar(jar, source="%s[%s](in-process)" % (name, profile_name))
+                try:
+                    cookies = _extract_cookies_from_jar(
+                        jar, source="%s[%s](in-process)" % (name, profile_name)
+                    )
+                except Exception as e:
+                    logger.debug("%s[%s] cookie jar extraction failed: %s", name, profile_name, e)
+                    attempts.append("%s[%s]=%s" % (name, profile_name, type(e).__name__))
+                    diagnostics.append("%s[%s]: %s" % (name, profile_name, e))
+                    continue
                 if cookies:
                     logger.info("Found cookies in %s profile '%s' (in-process)", name, profile_name)
                     return cookies, diagnostics
@@ -315,7 +374,13 @@ def _extract_in_process() -> Tuple[Optional[Dict[str, str]], List[str]]:
                 attempts.append("%s=%s" % (name, type(e).__name__))
                 diagnostics.append("%s: %s" % (name, e))
                 continue
-            cookies = _extract_cookies_from_jar(jar, source="%s(in-process)" % name)
+            try:
+                cookies = _extract_cookies_from_jar(jar, source="%s(in-process)" % name)
+            except Exception as e:
+                logger.debug("%s cookie jar extraction failed: %s", name, e)
+                attempts.append("%s=%s" % (name, type(e).__name__))
+                diagnostics.append("%s: %s" % (name, e))
+                continue
             if cookies:
                 logger.info("Found cookies in %s (in-process)", name)
                 return cookies, diagnostics
@@ -331,7 +396,7 @@ def _extract_via_subprocess() -> Tuple[Optional[Dict[str, str]], List[str]]:
 
     Returns (cookies_dict | None, diagnostics_list).
     """
-    extract_script = '''
+    extract_script = r'''
 import glob, json, os, sys
 try:
     import browser_cookie3
@@ -345,6 +410,20 @@ CHROMIUM_BASE_DIRS = {
     "edge": os.path.join("Microsoft Edge"),
     "brave": os.path.join("BraveSoftware", "Brave-Browser"),
 }
+
+DEFAULT_BROWSER_ORDER = ["arc", "chrome", "edge", "firefox", "brave"]
+
+def get_browser_order():
+    """Get browser order for cookie extraction."""
+    env_browser = os.environ.get("TWITTER_BROWSER", "").strip().lower()
+    if not env_browser:
+        return DEFAULT_BROWSER_ORDER.copy()
+    valid_browsers = {"arc", "chrome", "edge", "firefox", "brave"}
+    if env_browser not in valid_browsers:
+        return DEFAULT_BROWSER_ORDER.copy()
+    order = [env_browser]
+    order.extend(b for b in DEFAULT_BROWSER_ORDER if b != env_browser)
+    return order
 
 def iter_cookie_files(browser_name):
     base_dir = CHROMIUM_BASE_DIRS.get(browser_name)
@@ -398,16 +477,18 @@ def extract_from_jar(jar, name, profile=""):
         return result
     return None
 
-browsers = [
-    ("arc", browser_cookie3.arc),
-    ("chrome", browser_cookie3.chrome),
-    ("edge", browser_cookie3.edge),
-    ("firefox", browser_cookie3.firefox),
-    ("brave", browser_cookie3.brave),
-]
+browser_fn_map = {
+    "arc": browser_cookie3.arc,
+    "chrome": browser_cookie3.chrome,
+    "edge": browser_cookie3.edge,
+    "firefox": browser_cookie3.firefox,
+    "brave": browser_cookie3.brave,
+}
+browser_order = get_browser_order()
 attempts = []
 
-for name, fn in browsers:
+for name in browser_order:
+    fn = browser_fn_map[name]
     if name in CHROMIUM_BASE_DIRS:
         cookie_files = iter_cookie_files(name)
         if not cookie_files:
@@ -491,7 +572,11 @@ sys.exit(1)
         if "error" in data:
             attempts = data.get("attempts") or []
             if attempts:
-                logger.debug("Subprocess extraction attempts (%s): %s", label, ", ".join(str(item) for item in attempts))
+                logger.debug(
+                    "Subprocess extraction attempts (%s): %s",
+                    label,
+                    ", ".join(str(item) for item in attempts),
+                )
                 diagnostics.extend(str(item) for item in attempts)
             retryable = data.get("error") == "browser-cookie3 not installed"
             return None, retryable
@@ -582,7 +667,9 @@ def get_cookies() -> Dict[str, str]:
             lines.extend("  " + line for line in hint.splitlines())
             lines.append("")
         lines.append("Option 1: Set TWITTER_AUTH_TOKEN and TWITTER_CT0 environment variables")
-        lines.append("Option 2: Make sure you are logged into x.com in your browser (Arc/Chrome/Edge/Firefox/Brave)")
+        lines.append(
+            "Option 2: Make sure you are logged into x.com in your browser (Arc/Chrome/Edge/Firefox/Brave)"
+        )
         lines.append("")
         lines.append("Run 'twitter -v <command>' for debug diagnostics.")
         raise RuntimeError("\n".join(lines))
@@ -596,7 +683,11 @@ def get_cookies() -> Dict[str, str]:
         fresh_cookies, _ = extract_from_browser()
         if fresh_cookies:
             # Verify fresh cookies — if this also fails, let it raise
-            verify_cookies(fresh_cookies["auth_token"], fresh_cookies["ct0"], fresh_cookies.get("cookie_string"))
+            verify_cookies(
+                fresh_cookies["auth_token"],
+                fresh_cookies["ct0"],
+                fresh_cookies.get("cookie_string"),
+            )
             return fresh_cookies
         raise
     return cookies
