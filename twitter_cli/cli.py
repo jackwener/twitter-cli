@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 import re
 import inspect
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -306,9 +307,121 @@ def _run_write_command(
     return payload
 
 
+def _detect_package_manager():
+    import shutil
+    exe = sys.executable.replace("\\", "/")
+    if "/uv/" in exe and "/tools/" in exe and shutil.which("uv"):
+        return "uv"
+    if "/pipx/" in exe and "/venvs/" in exe and shutil.which("pipx"):
+        return "pipx"
+    if shutil.which("uv"):
+        try:
+            out = subprocess.run(["uv", "tool", "list"], capture_output=True, text=True, timeout=10)
+            if "twitter-cli" in out.stdout:
+                return "uv"
+        except Exception:
+            pass
+    if shutil.which("pipx"):
+        try:
+            out = subprocess.run(["pipx", "list"], capture_output=True, text=True, timeout=10)
+            if "twitter-cli" in out.stdout:
+                return "pipx"
+        except Exception:
+            pass
+    return "pip"
+
+
+def _build_update_cmd(manager, pkg):
+    if manager == "uv":
+        return ["uv", "tool", "upgrade", pkg]
+    if manager == "pipx":
+        return ["pipx", "upgrade", pkg]
+    return [sys.executable, "-m", "pip", "install", "--upgrade", pkg]
+
+
+def _version_tuple(v: str):
+    try:
+        return tuple(int(x) for x in v.split(".")[:3])
+    except ValueError:
+        return (0,)
+
+
+def _fetch_latest_version(pkg):
+    import urllib.request
+    import json
+    url = "https://pypi.org/pypi/%s/json" % pkg
+    with urllib.request.urlopen(url, timeout=10) as resp:
+        return json.loads(resp.read())["info"]["version"]
+
+
+def _win32_spawn_upgrade(cmd):
+    """On Windows the running twitter.exe is file-locked, so we can't upgrade it
+    in-process.  Instead write a tiny batch script that waits for our PID to
+    exit (releasing the lock) and then runs the upgrade command detached."""
+    import os
+    import tempfile
+
+    pid = os.getpid()
+    # Poll until our PID disappears, then run the upgrade and self-delete.
+    bat_lines = [
+        "@echo off",
+        ":wait",
+        f'tasklist /fi "PID eq {pid}" 2>nul | find /i "{pid}" >nul',
+        "if not errorlevel 1 (ping -n 2 127.0.0.1 >nul & goto wait)",
+        " ".join(f'"{c}"' for c in cmd),
+        'del "%~f0"',
+    ]
+    fd, bat_path = tempfile.mkstemp(suffix=".bat")
+    with os.fdopen(fd, "w") as f:
+        f.write("\r\n".join(bat_lines) + "\r\n")
+    DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+    CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    subprocess.Popen(
+        ["cmd.exe", "/c", bat_path],
+        creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+    )
+
+
+def _do_update(ctx, _param, value):
+    if not value or ctx.resilient_parsing:
+        return
+    pkg = "twitter-cli"
+    current = __version__
+    console.print("Current version: %s" % current)
+    console.print("Checking for updates to latest version...")
+    try:
+        latest = _fetch_latest_version(pkg)
+    except Exception:
+        console.print("[red]Failed to fetch latest version from PyPI.[/red]")
+        sys.exit(1)
+    if _version_tuple(current) >= _version_tuple(latest):
+        console.print("twitter-cli is up to date (%s)" % current)
+        ctx.exit()
+        return
+    manager = _detect_package_manager()
+    cmd = _build_update_cmd(manager, pkg)
+    console.print("Updating %s -> %s via %s..." % (current, latest, manager))
+    if sys.platform == "win32":
+        _win32_spawn_upgrade(cmd)
+        console.print("Upgrade launched — reopen your terminal once it completes.")
+        ctx.exit()
+        return
+    try:
+        subprocess.run(cmd, check=True)
+    except FileNotFoundError:
+        console.print("[red]Command not found: %s[/red]" % cmd[0])
+        sys.exit(1)
+    except subprocess.CalledProcessError as exc:
+        console.print("[red]Update failed (exit code %d).[/red]" % exc.returncode)
+        sys.exit(exc.returncode)
+    console.print("twitter-cli is up to date (%s)" % latest)
+    ctx.exit()
+
+
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging.")
 @click.option("--compact", "-c", is_flag=True, help="Compact output (minimal fields, LLM-friendly).")
+@click.option("--update", is_flag=True, is_eager=True, expose_value=False, callback=_do_update, help="Upgrade twitter-cli to the latest version.")
 @click.version_option(version=__version__)
 @click.pass_context
 def cli(ctx, verbose, compact):

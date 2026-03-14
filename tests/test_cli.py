@@ -8,7 +8,7 @@ import pytest
 from rich.console import Console
 import yaml
 
-from twitter_cli.cli import cli
+from twitter_cli.cli import cli, _detect_package_manager, _build_update_cmd
 from twitter_cli.formatter import article_to_markdown, print_tweet_table
 from twitter_cli.models import Author, Metrics, Tweet, UserProfile
 from twitter_cli.serialization import tweets_to_json
@@ -643,3 +643,162 @@ def test_show_malformed_cache_treated_as_empty(monkeypatch, tmp_path):
     result = runner.invoke(cli, ["show", "1"])
     assert result.exit_code != 0
     assert "No cached results" in result.output
+
+
+def test_update_already_up_to_date(monkeypatch) -> None:
+    monkeypatch.setattr("twitter_cli.cli.__version__", "1.0.0")
+    monkeypatch.setattr("twitter_cli.cli._fetch_latest_version", lambda pkg: "1.0.0")
+
+    result = CliRunner().invoke(cli, ["--update"])
+
+    assert result.exit_code == 0
+    assert "1.0.0" in result.output
+    assert "up to date" in result.output
+
+
+def test_update_triggers_upgrade_windows(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("twitter_cli.cli.__version__", "1.0.0")
+    monkeypatch.setattr("twitter_cli.cli._fetch_latest_version", lambda pkg: "1.1.0")
+    monkeypatch.setattr("twitter_cli.cli._detect_package_manager", lambda: "uv")
+    monkeypatch.setattr("sys.platform", "win32")
+
+    popen_calls = []
+
+    class FakePopen:
+        def __init__(self, cmd, **kw):
+            popen_calls.append(cmd)
+
+    # Redirect bat to tmp_path so mkstemp doesn't touch the real filesystem
+    import os
+
+    def fake_mkstemp(suffix=""):
+        path = str(tmp_path / ("upgrade" + suffix))
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        return fd, path
+
+    monkeypatch.setattr("tempfile.mkstemp", fake_mkstemp)
+    monkeypatch.setattr("subprocess.Popen", FakePopen)
+
+    result = CliRunner().invoke(cli, ["--update"])
+
+    assert result.exit_code == 0
+    assert len(popen_calls) == 1
+    assert popen_calls[0][0] == "cmd.exe"
+    assert popen_calls[0][1] == "/c"
+    assert "1.0.0" in result.output
+    assert "1.1.0" in result.output
+    assert "reopen" in result.output
+
+
+def test_update_triggers_upgrade_unix(monkeypatch) -> None:
+    monkeypatch.setattr("twitter_cli.cli.__version__", "1.0.0")
+    monkeypatch.setattr("twitter_cli.cli._fetch_latest_version", lambda pkg: "1.1.0")
+    monkeypatch.setattr("twitter_cli.cli._detect_package_manager", lambda: "uv")
+    monkeypatch.setattr("sys.platform", "linux")
+
+    class FakeCompleted:
+        returncode = 0
+
+    calls = []
+    monkeypatch.setattr("subprocess.run", lambda cmd, **kw: calls.append(cmd) or FakeCompleted())
+
+    result = CliRunner().invoke(cli, ["--update"])
+
+    assert result.exit_code == 0
+    assert calls == [["uv", "tool", "upgrade", "twitter-cli"]]
+    assert "up to date" in result.output
+    assert "1.1.0" in result.output
+
+
+def test_update_pypi_failure(monkeypatch) -> None:
+    monkeypatch.setattr("twitter_cli.cli.__version__", "1.0.0")
+    monkeypatch.setattr(
+        "twitter_cli.cli._fetch_latest_version",
+        lambda pkg: (_ for _ in ()).throw(Exception("timeout")),
+    )
+
+    result = CliRunner().invoke(cli, ["--update"])
+
+    assert result.exit_code != 0
+    assert "Failed to fetch" in result.output
+
+
+def test_update_command_fails_nonzero(monkeypatch) -> None:
+    monkeypatch.setattr("twitter_cli.cli.__version__", "1.0.0")
+    monkeypatch.setattr("twitter_cli.cli._fetch_latest_version", lambda pkg: "2.0.0")
+    monkeypatch.setattr("twitter_cli.cli._detect_package_manager", lambda: "uv")
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda cmd, **kw: (_ for _ in ()).throw(
+            __import__("subprocess").CalledProcessError(2, cmd)
+        ),
+    )
+
+    result = CliRunner().invoke(cli, ["--update"])
+
+    assert result.exit_code == 2
+    assert "Update failed" in result.output
+
+
+def test_update_command_not_found(monkeypatch) -> None:
+    monkeypatch.setattr("twitter_cli.cli.__version__", "1.0.0")
+    monkeypatch.setattr("twitter_cli.cli._fetch_latest_version", lambda pkg: "2.0.0")
+    monkeypatch.setattr("twitter_cli.cli._detect_package_manager", lambda: "pip")
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda cmd, **kw: (_ for _ in ()).throw(FileNotFoundError()),
+    )
+
+    result = CliRunner().invoke(cli, ["--update"])
+
+    assert result.exit_code != 0
+    assert "Command not found" in result.output
+
+
+def test_detect_package_manager_uv(monkeypatch) -> None:
+    monkeypatch.setattr("sys.executable", "/home/user/.local/share/uv/tools/twitter-cli/bin/python")
+    monkeypatch.setattr("shutil.which", lambda x: x if x == "uv" else None)
+
+    assert _detect_package_manager() == "uv"
+
+
+def test_detect_package_manager_pipx(monkeypatch) -> None:
+    monkeypatch.setattr("sys.executable", "/home/user/.local/pipx/venvs/twitter-cli/bin/python")
+    monkeypatch.setattr("shutil.which", lambda x: x if x == "pipx" else None)
+
+    assert _detect_package_manager() == "pipx"
+
+
+def test_detect_package_manager_fallback_uv_tool_list(monkeypatch) -> None:
+    monkeypatch.setattr("sys.executable", "/usr/bin/python3")
+    monkeypatch.setattr("shutil.which", lambda x: x if x == "uv" else None)
+
+    class FakeResult:
+        stdout = "twitter-cli v1.0.0\n"
+
+    monkeypatch.setattr("subprocess.run", lambda cmd, **kw: FakeResult())
+
+    assert _detect_package_manager() == "uv"
+
+
+def test_detect_package_manager_fallback_pip(monkeypatch) -> None:
+    monkeypatch.setattr("sys.executable", "/usr/bin/python3")
+    monkeypatch.setattr("shutil.which", lambda x: None)
+
+    assert _detect_package_manager() == "pip"
+
+
+def test_build_update_cmd_uv() -> None:
+    assert _build_update_cmd("uv", "twitter-cli") == ["uv", "tool", "upgrade", "twitter-cli"]
+
+
+def test_build_update_cmd_pipx() -> None:
+    assert _build_update_cmd("pipx", "twitter-cli") == ["pipx", "upgrade", "twitter-cli"]
+
+
+def test_build_update_cmd_pip(monkeypatch) -> None:
+    import sys
+    cmd = _build_update_cmd("pip", "twitter-cli")
+    assert cmd == [sys.executable, "-m", "pip", "install", "--upgrade", "twitter-cli"]
