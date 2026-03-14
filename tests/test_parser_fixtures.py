@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from twitter_cli.client import TwitterClient, _deep_get
+from unittest.mock import patch
+
+from twitter_cli.client import TwitterClient
+from twitter_cli.parser import _deep_get, parse_timeline_response
 
 
 def _make_client() -> TwitterClient:
@@ -15,10 +18,9 @@ def _make_client() -> TwitterClient:
 
 
 def test_parse_home_timeline_fixture(fixture_loader) -> None:
-    client = _make_client()
     payload = fixture_loader("home_timeline.json")
 
-    tweets, cursor = client._parse_timeline_response(
+    tweets, cursor = parse_timeline_response(
         payload,
         lambda data: _deep_get(data, "data", "home", "home_timeline_urt", "instructions"),
     )
@@ -34,10 +36,9 @@ def test_parse_home_timeline_fixture(fixture_loader) -> None:
 
 
 def test_parse_tweet_detail_fixture_with_nested_items(fixture_loader) -> None:
-    client = _make_client()
     payload = fixture_loader("tweet_detail.json")
 
-    tweets, cursor = client._parse_timeline_response(
+    tweets, cursor = parse_timeline_response(
         payload,
         lambda data: _deep_get(data, "data", "threaded_conversation_with_injections_v2", "instructions"),
     )
@@ -47,10 +48,9 @@ def test_parse_tweet_detail_fixture_with_nested_items(fixture_loader) -> None:
 
 
 def test_parse_search_timeline_fixture_with_module_items(fixture_loader) -> None:
-    client = _make_client()
     payload = fixture_loader("search_timeline.json")
 
-    tweets, cursor = client._parse_timeline_response(
+    tweets, cursor = parse_timeline_response(
         payload,
         lambda data: _deep_get(data, "data", "search_by_raw_query", "search_timeline", "timeline", "instructions"),
     )
@@ -62,10 +62,9 @@ def test_parse_search_timeline_fixture_with_module_items(fixture_loader) -> None
 
 
 def test_parse_list_timeline_fixture_with_visibility_wrapper(fixture_loader) -> None:
-    client = _make_client()
     payload = fixture_loader("list_timeline.json")
 
-    tweets, cursor = client._parse_timeline_response(
+    tweets, cursor = parse_timeline_response(
         payload,
         lambda data: _deep_get(data, "data", "list", "tweets_timeline", "timeline", "instructions"),
     )

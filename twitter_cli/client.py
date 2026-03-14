@@ -715,7 +715,7 @@ class TwitterClient:
                 variables["cursor"] = cursor
 
             data = self._graphql_get(operation_name, variables, FEATURES, field_toggles=field_toggles)
-            new_tweets, next_cursor = self._parse_timeline_response(data, get_instructions)
+            new_tweets, next_cursor = parse_timeline_response(data, get_instructions)
 
             for tweet in new_tweets:
                 if tweet.id and tweet.id not in seen_ids:
@@ -780,7 +780,7 @@ class TwitterClient:
                         item = content.get("itemContent", {})
                         user_results = _deep_get(item, "user_results", "result")
                         if user_results:
-                            user = self._parse_user_result(user_results)
+                            user = parse_user_result(user_results)
                             if user:
                                 new_users.append(user)
                     elif entry_type == "TimelineTimelineCursor":
@@ -1081,28 +1081,3 @@ class TwitterClient:
             except Exception as exc:
                 logger.debug("Failed to generate transaction id: %s", exc)
         return headers
-
-    # ── Backward-compatible delegation to parser module ──────────────
-
-    @staticmethod
-    def _parse_user_result(user_data):
-        # type: (Dict[str, Any]) -> Optional[UserProfile]
-        """Parse a user result object into UserProfile."""
-        return parse_user_result(user_data)
-
-    def _parse_tweet_result(self, result, depth=0):
-        # type: (Dict[str, Any], int) -> Optional[Tweet]
-        """Parse a single TweetResult into a Tweet dataclass."""
-        return parse_tweet_result(result, depth)
-
-    def _parse_timeline_response(self, data, get_instructions):
-        # type: (Any, Callable[[Any], Any]) -> Tuple[List[Tweet], Optional[str]]
-        """Parse timeline GraphQL response into tweets and next cursor."""
-        return parse_timeline_response(data, get_instructions)
-
-
-# ── Backward compatibility re-exports ────────────────────────────────────
-# These keep existing test imports working without modification.
-
-from .graphql import FALLBACK_QUERY_IDS  # noqa: E402, F401
-from .parser import _extract_cursor, _extract_media  # noqa: E402, F401
