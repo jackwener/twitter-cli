@@ -332,15 +332,18 @@ def _detect_package_manager():
 
 
 def _build_update_cmd(manager, pkg):
-    import shutil
     if manager == "uv":
         return ["uv", "tool", "upgrade", pkg]
     if manager == "pipx":
         return ["pipx", "upgrade", pkg]
-    pip_bin = shutil.which("pip") or shutil.which("pip3")
-    if pip_bin:
-        return [str(pip_bin), "install", "--upgrade", pkg]
     return [sys.executable, "-m", "pip", "install", "--upgrade", pkg]
+
+
+def _version_tuple(v: str):
+    try:
+        return tuple(int(x) for x in v.split(".")[:3])
+    except ValueError:
+        return (0,)
 
 
 def _fetch_latest_version(pkg):
@@ -351,26 +354,32 @@ def _fetch_latest_version(pkg):
         return json.loads(resp.read())["info"]["version"]
 
 
-def _win32_run_unlocked(cmd):
-    import shutil
-    launcher_str = shutil.which("twitter")
-    launcher = Path(str(launcher_str)) if launcher_str else Path(sys.executable).parent / "twitter.exe"
-    stale = launcher.with_suffix(".old.exe")
-    if launcher.exists():
-        try:
-            if stale.exists():
-                stale.unlink(missing_ok=True)
-            launcher.rename(stale)
-        except OSError:
-            pass
-    try:
-        subprocess.run(cmd, check=True)
-    finally:
-        if not launcher.exists() and stale.exists():
-            try:
-                stale.rename(launcher)
-            except OSError:
-                pass
+def _win32_spawn_upgrade(cmd):
+    """On Windows the running twitter.exe is file-locked, so we can't upgrade it
+    in-process.  Instead write a tiny batch script that waits for our PID to
+    exit (releasing the lock) and then runs the upgrade command detached."""
+    import os
+    import tempfile
+
+    pid = os.getpid()
+    # Poll until our PID disappears, then run the upgrade and self-delete.
+    bat_lines = [
+        "@echo off",
+        ":wait",
+        f'tasklist /fi "PID eq {pid}" 2>nul | find /i "{pid}" >nul',
+        "if not errorlevel 1 (ping -n 2 127.0.0.1 >nul & goto wait)",
+        " ".join(f'"{c}"' for c in cmd),
+        'del "%~f0"',
+    ]
+    fd, bat_path = tempfile.mkstemp(suffix=".bat")
+    with os.fdopen(fd, "w") as f:
+        f.write("\r\n".join(bat_lines) + "\r\n")
+    DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+    CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    subprocess.Popen(
+        ["cmd.exe", "/c", bat_path],
+        creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+    )
 
 
 def _do_update(ctx, _param, value):
@@ -385,18 +394,20 @@ def _do_update(ctx, _param, value):
     except Exception:
         console.print("[red]Failed to fetch latest version from PyPI.[/red]")
         sys.exit(1)
-    if current == latest:
+    if _version_tuple(current) >= _version_tuple(latest):
         console.print("twitter-cli is up to date (%s)" % current)
         ctx.exit()
         return
     manager = _detect_package_manager()
     cmd = _build_update_cmd(manager, pkg)
     console.print("Updating %s -> %s via %s..." % (current, latest, manager))
+    if sys.platform == "win32":
+        _win32_spawn_upgrade(cmd)
+        console.print("Upgrade launched — reopen your terminal once it completes.")
+        ctx.exit()
+        return
     try:
-        if sys.platform == "win32":
-            _win32_run_unlocked(cmd)
-        else:
-            subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True)
     except FileNotFoundError:
         console.print("[red]Command not found: %s[/red]" % cmd[0])
         sys.exit(1)
