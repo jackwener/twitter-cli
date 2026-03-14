@@ -11,13 +11,18 @@ from twitter_cli import auth
 
 
 def test_get_cookies_prefers_env(monkeypatch) -> None:
-    monkeypatch.setattr(auth, "load_from_env", lambda: {"auth_token": "env-token", "ct0": "env-csrf"})
-    monkeypatch.setattr(auth, "extract_from_browser", lambda: pytest.fail("should not extract from browser"))
+    monkeypatch.setattr(
+        auth, "load_from_env", lambda: {"auth_token": "env-token", "ct0": "env-csrf"}
+    )
+    monkeypatch.setattr(
+        auth, "extract_from_browser", lambda: pytest.fail("should not extract from browser")
+    )
     seen = []
     monkeypatch.setattr(
         auth,
         "verify_cookies",
-        lambda auth_token, ct0, cookie_string=None: seen.append((auth_token, ct0, cookie_string)) or {},
+        lambda auth_token, ct0, cookie_string=None: seen.append((auth_token, ct0, cookie_string))
+        or {},
     )
 
     cookies = auth.get_cookies()
@@ -101,14 +106,39 @@ def test_extract_in_process_supports_arc(monkeypatch) -> None:
             self.name = name
             self.value = value
 
+    class CookieJar:
+        def __init__(self, cookies: list[Cookie]) -> None:
+            self._cookies = cookies
+
+        def __iter__(self):
+            return iter(self._cookies)
+
+    # Lambdas that accept optional cookie_file argument
+    def make_arc(**kwargs):
+        return CookieJar([Cookie(".x.com", "auth_token", "token"), Cookie(".x.com", "ct0", "csrf")])
+
+    def make_chrome(**kwargs):
+        pytest.fail("chrome should not be used when arc succeeds")
+
+    def make_edge(**kwargs):
+        pytest.fail("edge should not be used when arc succeeds")
+
+    def make_firefox(**kwargs):
+        pytest.fail("firefox should not be used when arc succeeds")
+
+    def make_brave(**kwargs):
+        pytest.fail("brave should not be used when arc succeeds")
+
     fake_module = SimpleNamespace(
-        arc=lambda: [Cookie(".x.com", "auth_token", "token"), Cookie(".x.com", "ct0", "csrf")],
-        chrome=lambda: pytest.fail("chrome should not be used when arc succeeds"),
-        edge=lambda: pytest.fail("edge should not be used when arc succeeds"),
-        firefox=lambda: pytest.fail("firefox should not be used when arc succeeds"),
-        brave=lambda: pytest.fail("brave should not be used when arc succeeds"),
+        arc=make_arc,
+        chrome=make_chrome,
+        edge=make_edge,
+        firefox=make_firefox,
+        brave=make_brave,
     )
     monkeypatch.setitem(sys.modules, "browser_cookie3", fake_module)
+    # Mock _iter_chrome_cookie_files to return empty so we test the default path
+    monkeypatch.setattr(auth, "_iter_chrome_cookie_files", lambda name: [])
 
     cookies, diagnostics = auth._extract_in_process()
 
@@ -135,7 +165,8 @@ def test_extract_via_subprocess_script_includes_arc(monkeypatch) -> None:
     cookies, diagnostics = auth._extract_via_subprocess()
 
     assert cookies is None
-    assert '("arc", browser_cookie3.arc)' in seen["script"]
+    # Check for the dict format used in the new implementation
+    assert '"arc": browser_cookie3.arc' in seen["script"]
 
 
 def test_extract_via_subprocess_retries_uv_when_current_env_has_no_output(monkeypatch) -> None:
@@ -243,7 +274,9 @@ def test_iter_chrome_cookie_files_env_override(monkeypatch, tmp_path) -> None:
     assert "Profile 5" in paths[0]
 
 
-def test_iter_chrome_cookie_files_edge_linux_uses_microsoft_edge_path(monkeypatch, tmp_path) -> None:
+def test_iter_chrome_cookie_files_edge_linux_uses_microsoft_edge_path(
+    monkeypatch, tmp_path
+) -> None:
     monkeypatch.setattr(auth.sys, "platform", "linux")
     edge_dir = tmp_path / ".config" / "microsoft-edge"
     (edge_dir / "Default").mkdir(parents=True)
@@ -383,14 +416,40 @@ def test_extract_in_process_returns_diagnostics_on_failure(monkeypatch) -> None:
     class BrowserError(Exception):
         pass
 
+    # Use a callable class that throws when iterated
+    class ThrowingJar:
+        def __init__(self, error_msg: str):
+            self.error_msg = error_msg
+
+        def __iter__(self):
+            raise BrowserError(self.error_msg)
+
+    # Lambdas that accept optional cookie_file argument
+    def make_arc(**kwargs):
+        return ThrowingJar("Unable to get key for cookie decryption")
+
+    def make_chrome(**kwargs):
+        return ThrowingJar("Chrome not found")
+
+    def make_edge(**kwargs):
+        return ThrowingJar("Edge not found")
+
+    def make_firefox(**kwargs):
+        return ThrowingJar("Firefox not found")
+
+    def make_brave(**kwargs):
+        return ThrowingJar("Brave not found")
+
     fake_module = SimpleNamespace(
-        arc=lambda: (_ for _ in ()).throw(BrowserError("Unable to get key for cookie decryption")),
-        chrome=lambda: [],
-        edge=lambda: (_ for _ in ()).throw(BrowserError("Edge not found")),
-        firefox=lambda: (_ for _ in ()).throw(BrowserError("Firefox not found")),
-        brave=lambda: (_ for _ in ()).throw(BrowserError("Brave not found")),
+        arc=make_arc,
+        chrome=make_chrome,
+        edge=make_edge,
+        firefox=make_firefox,
+        brave=make_brave,
     )
     monkeypatch.setitem(sys.modules, "browser_cookie3", fake_module)
+    # Mock _iter_chrome_cookie_files to return empty so we test the default path
+    monkeypatch.setattr(auth, "_iter_chrome_cookie_files", lambda name: [])
 
     cookies, diagnostics = auth._extract_in_process()
 
