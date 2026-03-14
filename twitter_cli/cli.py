@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 import re
 import inspect
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -306,9 +307,110 @@ def _run_write_command(
     return payload
 
 
+def _detect_package_manager():
+    import shutil
+    exe = sys.executable.replace("\\", "/")
+    if "/uv/" in exe and "/tools/" in exe and shutil.which("uv"):
+        return "uv"
+    if "/pipx/" in exe and "/venvs/" in exe and shutil.which("pipx"):
+        return "pipx"
+    if shutil.which("uv"):
+        try:
+            out = subprocess.run(["uv", "tool", "list"], capture_output=True, text=True, timeout=10)
+            if "twitter-cli" in out.stdout:
+                return "uv"
+        except Exception:
+            pass
+    if shutil.which("pipx"):
+        try:
+            out = subprocess.run(["pipx", "list"], capture_output=True, text=True, timeout=10)
+            if "twitter-cli" in out.stdout:
+                return "pipx"
+        except Exception:
+            pass
+    return "pip"
+
+
+def _build_update_cmd(manager, pkg):
+    import shutil
+    if manager == "uv":
+        return ["uv", "tool", "upgrade", pkg]
+    if manager == "pipx":
+        return ["pipx", "upgrade", pkg]
+    pip_bin = shutil.which("pip") or shutil.which("pip3")
+    if pip_bin:
+        return [str(pip_bin), "install", "--upgrade", pkg]
+    return [sys.executable, "-m", "pip", "install", "--upgrade", pkg]
+
+
+def _fetch_latest_version(pkg):
+    import urllib.request
+    import json
+    url = "https://pypi.org/pypi/%s/json" % pkg
+    with urllib.request.urlopen(url, timeout=10) as resp:
+        return json.loads(resp.read())["info"]["version"]
+
+
+def _win32_run_unlocked(cmd):
+    import shutil
+    launcher_str = shutil.which("twitter")
+    launcher = Path(str(launcher_str)) if launcher_str else Path(sys.executable).parent / "twitter.exe"
+    stale = launcher.with_suffix(".old.exe")
+    if launcher.exists():
+        try:
+            if stale.exists():
+                stale.unlink(missing_ok=True)
+            launcher.rename(stale)
+        except OSError:
+            pass
+    try:
+        subprocess.run(cmd, check=True)
+    finally:
+        if not launcher.exists() and stale.exists():
+            try:
+                stale.rename(launcher)
+            except OSError:
+                pass
+
+
+def _do_update(ctx, _param, value):
+    if not value or ctx.resilient_parsing:
+        return
+    pkg = "twitter-cli"
+    current = __version__
+    console.print("Current version: %s" % current)
+    console.print("Checking for updates to latest version...")
+    try:
+        latest = _fetch_latest_version(pkg)
+    except Exception:
+        console.print("[red]Failed to fetch latest version from PyPI.[/red]")
+        sys.exit(1)
+    if current == latest:
+        console.print("twitter-cli is up to date (%s)" % current)
+        ctx.exit()
+        return
+    manager = _detect_package_manager()
+    cmd = _build_update_cmd(manager, pkg)
+    console.print("Updating %s -> %s via %s..." % (current, latest, manager))
+    try:
+        if sys.platform == "win32":
+            _win32_run_unlocked(cmd)
+        else:
+            subprocess.run(cmd, check=True)
+    except FileNotFoundError:
+        console.print("[red]Command not found: %s[/red]" % cmd[0])
+        sys.exit(1)
+    except subprocess.CalledProcessError as exc:
+        console.print("[red]Update failed (exit code %d).[/red]" % exc.returncode)
+        sys.exit(exc.returncode)
+    console.print("twitter-cli is up to date (%s)" % latest)
+    ctx.exit()
+
+
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging.")
 @click.option("--compact", "-c", is_flag=True, help="Compact output (minimal fields, LLM-friendly).")
+@click.option("--update", is_flag=True, is_eager=True, expose_value=False, callback=_do_update, help="Upgrade twitter-cli to the latest version.")
 @click.version_option(version=__version__)
 @click.pass_context
 def cli(ctx, verbose, compact):
