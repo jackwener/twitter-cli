@@ -135,7 +135,7 @@ def test_extract_via_subprocess_script_includes_arc(monkeypatch) -> None:
     cookies, diagnostics = auth._extract_via_subprocess()
 
     assert cookies is None
-    assert '("arc", browser_cookie3.arc)' in seen["script"]
+    assert '"arc": browser_cookie3.arc' in seen["script"]
 
 
 def test_extract_via_subprocess_retries_uv_when_current_env_has_no_output(monkeypatch) -> None:

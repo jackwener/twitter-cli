@@ -49,6 +49,7 @@ If `AUTH_NEEDED`, proceed to guide the user:
 
 Ensure user is logged into x.com in one of: Arc, Chrome, Edge, Firefox, Brave. twitter-cli auto-extracts cookies.
 All Chrome profiles are scanned automatically. To specify a profile: `TWITTER_CHROME_PROFILE="Profile 2" twitter feed`.
+To prioritize a specific browser: `TWITTER_BROWSER=chrome twitter feed` (supported: arc, chrome, edge, firefox, brave).
 
 ```bash
 twitter whoami

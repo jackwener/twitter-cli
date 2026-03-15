@@ -193,6 +193,20 @@ _CHROMIUM_BASE_DIRS: Dict[str, str] = {
     "brave": os.path.join("BraveSoftware", "Brave-Browser"),
 }
 
+# Default browser order for cookie extraction
+_DEFAULT_BROWSER_ORDER = ["arc", "chrome", "edge", "firefox", "brave"]
+
+
+def _get_browser_order() -> List[str]:
+    """Return browser extraction order, respecting TWITTER_BROWSER env var."""
+    env = os.environ.get("TWITTER_BROWSER", "").strip().lower()
+    if not env:
+        return _DEFAULT_BROWSER_ORDER
+    if env not in {"arc", "chrome", "edge", "firefox", "brave"}:
+        logger.warning("TWITTER_BROWSER='%s' is invalid, using default order", env)
+        return _DEFAULT_BROWSER_ORDER
+    return [env] + [b for b in _DEFAULT_BROWSER_ORDER if b != env]
+
 
 def _iter_chrome_cookie_files(browser_name: str) -> List[str]:
     """Return cookie file paths for all Chrome profiles.
@@ -262,17 +276,18 @@ def _extract_in_process() -> Tuple[Optional[Dict[str, str]], List[str]]:
         logger.debug("browser_cookie3 not installed, skipping in-process extraction")
         return None, ["browser-cookie3 not installed"]
 
-    browsers = [
-        ("arc", browser_cookie3.arc),
-        ("chrome", browser_cookie3.chrome),
-        ("edge", browser_cookie3.edge),
-        ("firefox", browser_cookie3.firefox),
-        ("brave", browser_cookie3.brave),
-    ]
+    browser_fns = {
+        "arc": browser_cookie3.arc,
+        "chrome": browser_cookie3.chrome,
+        "edge": browser_cookie3.edge,
+        "firefox": browser_cookie3.firefox,
+        "brave": browser_cookie3.brave,
+    }
     attempts: List[str] = []
     diagnostics: List[str] = []
 
-    for name, fn in browsers:
+    for name in _get_browser_order():
+        fn = browser_fns[name]
         if name in _CHROMIUM_BASE_DIRS:
             # Chromium-based: iterate all profiles
             cookie_files = _iter_chrome_cookie_files(name)
@@ -398,16 +413,23 @@ def extract_from_jar(jar, name, profile=""):
         return result
     return None
 
-browsers = [
-    ("arc", browser_cookie3.arc),
-    ("chrome", browser_cookie3.chrome),
-    ("edge", browser_cookie3.edge),
-    ("firefox", browser_cookie3.firefox),
-    ("brave", browser_cookie3.brave),
-]
+DEFAULT_ORDER = ["arc", "chrome", "edge", "firefox", "brave"]
+env_browser = os.environ.get("TWITTER_BROWSER", "").strip().lower()
+if env_browser in {"arc", "chrome", "edge", "firefox", "brave"}:
+    browser_order = [env_browser] + [b for b in DEFAULT_ORDER if b != env_browser]
+else:
+    browser_order = DEFAULT_ORDER
+browser_fns = {
+    "arc": browser_cookie3.arc,
+    "chrome": browser_cookie3.chrome,
+    "edge": browser_cookie3.edge,
+    "firefox": browser_cookie3.firefox,
+    "brave": browser_cookie3.brave,
+}
 attempts = []
 
-for name, fn in browsers:
+for name in browser_order:
+    fn = browser_fns[name]
     if name in CHROMIUM_BASE_DIRS:
         cookie_files = iter_cookie_files(name)
         if not cookie_files:
