@@ -538,19 +538,20 @@ twitter-cli 现在支持两套认证后端：
 export TWITTER_AUTH_MODE=api
 export TWITTER_API_BEARER_TOKEN=...
 
-# OAuth 2.0 user context（whoami/status/post/like/retweet/follow 等需要）
+# OAuth 2.0 user context（whoami/status/post/like/retweet/follow/bookmarks 等需要）
 export TWITTER_API_ACCESS_TOKEN=...
 # 可选：避免写操作前额外请求 /users/me
 export TWITTER_API_USER_ID=...
 ```
 
-**官方 API 模式当前支持：**
-- 读取：`user`、`user-posts`、`search`、`followers`、`following`、`status`、`whoami`
-- 写入：`post`、`reply`、`quote`、`delete`、`like`、`unlike`、`retweet`、`unretweet`、`follow`、`unfollow`
+**twitter-cli API 模式当前支持：**
+- 读取：`feed`、`bookmarks`、`tweet`、`show`、`article`、`list`、`likes`、`search`、`user`、`user-posts`、`followers`、`following`、`status`、`whoami`
+- 写入：`post`、`reply`、`quote`、`delete`、`like`、`unlike`、`retweet`、`unretweet`、`follow`、`unfollow`、`bookmark`、`unbookmark`
+- 媒体：`post` / `reply` / `quote` 支持图片上传
 
-**官方 API 模式暂不支持：**
-- `feed`、`bookmarks`、`tweet`、`show`、`article`、`list`、`likes`、`bookmark`、`unbookmark`
-- `post` / `reply` / `quote` 的图片上传
+**API 模式说明：**
+- `feed` 和 `feed -t following` 当前都映射到官方 reverse-chronological home timeline。
+- `article` 基于官方 tweet lookup 返回的 article 字段做 best-effort 渲染；是否有正文取决于 API 返回内容。
 
 **Chrome 多 Profile 支持**：会自动遍历所有 Chrome profile。也可以通过环境变量指定：
 
