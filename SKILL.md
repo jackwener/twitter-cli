@@ -211,11 +211,15 @@ twitter following elonmusk --max 50    # Following
 twitter post "Hello from twitter-cli!"              # Post tweet
 twitter post "Hello!" --image photo.jpg              # Post with image
 twitter post "Gallery" -i a.png -i b.jpg             # Up to 4 images
+twitter post "Watch this" --video clip.mp4           # API mode: post with video
+twitter post "Watch this" --file clip.mp4 --alt-text "Demo clip"
 twitter reply 1234567890 "Great tweet!"              # Reply (standalone)
 twitter reply 1234567890 "Nice!" -i pic.png          # Reply with image
+twitter reply 1234567890 "Nice!" --video clip.mp4    # API mode: reply with video
 twitter post "reply text" --reply-to 1234567890      # Reply (via post)
 twitter quote 1234567890 "Interesting take"          # Quote-tweet
 twitter quote 1234567890 "Look" -i chart.png         # Quote with image
+twitter quote 1234567890 "Look" --video clip.mp4     # API mode: quote with video
 twitter delete 1234567890                            # Delete tweet
 twitter like 1234567890                              # Like
 twitter unlike 1234567890                            # Unlike
@@ -227,11 +231,15 @@ twitter follow elonmusk                              # Follow user
 twitter unfollow elonmusk                            # Unfollow user
 ```
 
-**Image upload notes:**
+**Media upload notes:**
 - Supported formats: JPEG, PNG, GIF, WebP
 - Max file size: 5 MB per image
 - Max 4 images per tweet
 - Use `--image` / `-i` (repeatable)
+- In official API mode, you can also upload one video with `--video` / `--file`
+- Supported video formats in API mode: MP4, MOV, WebM
+- Max video size in API mode: 512 MB
+- `--alt-text` currently applies to one uploaded media item
 
 ## Official API Mode Notes
 
@@ -241,6 +249,7 @@ twitter unfollow elonmusk                            # Unfollow user
   - `auto` prefers full-archive search for older posts and falls back when `/search/all` is unavailable.
 - `article` is best-effort in API mode and depends on the article fields returned by official tweet lookup.
 - `mentions`, `list-info`, `owned-lists`, and `followed-lists` are available in official API mode.
+- `--video` / `--file` and `--alt-text` are currently intended for official API mode.
 
 ## Agent Workflows
 
@@ -259,6 +268,13 @@ twitter post "Check this out!" --image /path/to/photo.jpg
 
 # Multiple images
 twitter post "Photo gallery" -i img1.png -i img2.jpg -i img3.webp
+```
+
+### Post with video (official API mode)
+
+```bash
+twitter --auth-mode api post "Watch this" --video /path/to/clip.mp4
+twitter --auth-mode api post "Watch this" --file /path/to/clip.mp4 --alt-text "Demo clip"
 ```
 
 ### Reply to someone's latest tweet
@@ -365,7 +381,7 @@ twitter bookmarks --filter
 
 ## Limitations
 
-- **Images only** — video/GIF animation upload not yet supported (image upload supports JPEG/PNG/GIF/WebP)
+- **Video upload is API-mode oriented** — `--video` / `--file` currently targets the official API backend
 - **No DMs** — no direct messaging
 - **No notifications** — can't read notifications
 - **No polls** — can't create polls

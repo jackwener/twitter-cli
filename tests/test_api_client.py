@@ -21,14 +21,15 @@ class DummyResponse:
 class DummySession:
     def __init__(self, responses: list[DummyResponse]) -> None:
         self._responses = responses
-        self.calls: list[tuple[str, str, dict | None, str | None, dict]] = []
+        self.calls: list[tuple[str, str, dict | None, object, dict]] = []
 
     def get(self, url: str, headers=None, params=None, timeout=None):
         self.calls.append(("GET", url, params, None, headers or {}))
         return self._responses.pop(0)
 
-    def post(self, url: str, headers=None, params=None, data=None, timeout=None):
-        self.calls.append(("POST", url, params, data, headers or {}))
+    def post(self, url: str, headers=None, params=None, data=None, files=None, timeout=None):
+        payload = {"data": data, "files": files} if files is not None else data
+        self.calls.append(("POST", url, params, payload, headers or {}))
         return self._responses.pop(0)
 
     def delete(self, url: str, headers=None, params=None, timeout=None):
@@ -670,3 +671,38 @@ def test_api_client_upload_media_uses_v2_media_endpoint(monkeypatch, tmp_path) -
     payload = json.loads(session.calls[0][3])
     assert payload["media_category"] == "tweet_image"
     assert payload["media_type"] == "image/png"
+
+
+def test_api_client_upload_video_uses_chunked_flow_and_metadata(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("TWITTER_API_ACCESS_TOKEN", "access-token")
+    monkeypatch.delenv("TWITTER_API_BEARER_TOKEN", raising=False)
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"\x00" * 32)
+    session = DummySession(
+        [
+            DummyResponse(200, {"data": {"id": "m1"}}),
+            DummyResponse(200, {}),
+            DummyResponse(200, {"data": {"processing_info": {"state": "pending", "check_after_secs": 0}}}),
+            DummyResponse(200, {"data": {"processing_info": {"state": "succeeded"}}}),
+            DummyResponse(200, {"data": {"updated": True}}),
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    media_id = client.upload_media(str(video_path), alt_text="demo clip")
+
+    assert media_id == "m1"
+    assert session.calls[0][1].endswith("/media/upload/initialize")
+    init_payload = json.loads(session.calls[0][3])
+    assert init_payload["media_category"] == "tweet_video"
+    assert session.calls[1][1].endswith("/media/upload/m1/append")
+    append_payload = session.calls[1][3]
+    assert isinstance(append_payload, dict)
+    assert append_payload["data"]["segment_index"] == "0"
+    assert session.calls[2][1].endswith("/media/upload/m1/finalize")
+    assert session.calls[3][1].endswith("/media/upload")
+    assert session.calls[3][2] == {"command": "STATUS", "media_id": "m1"}
+    assert session.calls[4][1].endswith("/media/metadata")
+    metadata_payload = json.loads(session.calls[4][3])
+    assert metadata_payload["metadata"]["alt_text"]["text"] == "demo clip"

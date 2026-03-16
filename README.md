@@ -163,9 +163,13 @@ twitter following elonmusk --max 50
 twitter post "Hello from twitter-cli!"
 twitter post "Hello!" --image photo.jpg            # Post with image
 twitter post "Gallery" -i a.png -i b.jpg -i c.webp  # Up to 4 images
+twitter post "Watch this" --video clip.mp4          # API mode: post with video
+twitter post "Watch this" --file clip.mp4 --alt-text "Demo clip"
 twitter post "reply text" --reply-to 1234567890
 twitter reply 1234567890 "Nice!" -i screenshot.png  # Reply with image
+twitter reply 1234567890 "Nice!" --video clip.mp4   # API mode: reply with video
 twitter quote 1234567890 "Look" -i chart.png        # Quote with image
+twitter quote 1234567890 "Look" --video clip.mp4    # API mode: quote with video
 twitter post "Hello from twitter-cli!" --json
 twitter delete 1234567890
 twitter like 1234567890
@@ -205,12 +209,13 @@ export TWITTER_API_USER_ID=...
 **twitter-cli API mode currently supports:**
 - Read: `feed`, `bookmarks`, `tweet`, `show`, `article`, `list`, `list-info`, `likes`, `mentions`, `search`, `user`, `user-posts`, `owned-lists`, `followed-lists`, `followers`, `following`, `status`, `whoami`
 - Write: `post`, `reply`, `quote`, `delete`, `like`, `unlike`, `retweet`, `unretweet`, `follow`, `unfollow`, `bookmark`, `unbookmark`
-- Media: image upload in `post` / `reply` / `quote`
+- Media: image and video upload in `post` / `reply` / `quote`
 
 **API mode notes:**
 - `feed` and `feed -t following` both use the official reverse-chronological home timeline endpoint exposed by the authenticated user's API access.
 - `search --scope all` uses the official full-archive search endpoint when your API access permits it.
 - `tweet` / `show` support `--reply-scope auto|recent|all`; `auto` prefers full-archive search for older posts and falls back when needed.
+- `--video` / `--file` and `--alt-text` are currently intended for official API mode.
 - `article` uses the official tweet lookup response and renders article metadata/content when the API returns article fields for that post.
 
 **Chrome multi-profile**: All Chrome profiles are scanned automatically. To specify a profile:
@@ -521,9 +526,13 @@ twitter following elonmusk
 twitter post "你好，世界！"
 twitter post "发图" --image photo.jpg              # 带图发推
 twitter post "多图" -i a.png -i b.jpg -i c.webp    # 最多 4 张图片
+twitter post "看这个" --video clip.mp4            # API 模式：带视频发推
+twitter post "看这个" --file clip.mp4 --alt-text "演示视频"
 twitter post "回复内容" --reply-to 1234567890
 twitter reply 1234567890 "回复" -i screenshot.png   # 带图回复
+twitter reply 1234567890 "回复" --video clip.mp4    # API 模式：带视频回复
 twitter quote 1234567890 "评论" -i chart.png        # 带图引用
+twitter quote 1234567890 "评论" --video clip.mp4    # API 模式：带视频引用
 twitter post "你好，世界！" --json
 twitter delete 1234567890
 twitter like 1234567890
@@ -563,12 +572,13 @@ export TWITTER_API_USER_ID=...
 **twitter-cli API 模式当前支持：**
 - 读取：`feed`、`bookmarks`、`tweet`、`show`、`article`、`list`、`list-info`、`likes`、`mentions`、`search`、`user`、`user-posts`、`owned-lists`、`followed-lists`、`followers`、`following`、`status`、`whoami`
 - 写入：`post`、`reply`、`quote`、`delete`、`like`、`unlike`、`retweet`、`unretweet`、`follow`、`unfollow`、`bookmark`、`unbookmark`
-- 媒体：`post` / `reply` / `quote` 支持图片上传
+- 媒体：`post` / `reply` / `quote` 支持图片和视频上传
 
 **API 模式说明：**
 - `feed` 和 `feed -t following` 当前都映射到官方 reverse-chronological home timeline。
 - `search --scope all` 会在权限允许时使用官方 full-archive search endpoint。
 - `tweet` / `show` 支持 `--reply-scope auto|recent|all`；`auto` 会优先对较老的推文使用 full-archive 搜索，并在必要时自动回退。
+- `--video` / `--file` 和 `--alt-text` 当前主要面向官方 API 模式。
 - `article` 基于官方 tweet lookup 返回的 article 字段做 best-effort 渲染；是否有正文取决于 API 返回内容。
 
 **Chrome 多 Profile 支持**：会自动遍历所有 Chrome profile。也可以通过环境变量指定：

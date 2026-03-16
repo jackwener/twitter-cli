@@ -493,8 +493,9 @@ def test_cli_post_with_images_passes_media_ids(monkeypatch, tmp_path) -> None:
     calls = []
 
     class FakeClient:
-        def upload_media(self, path: str) -> str:
+        def upload_media(self, path: str, alt_text=None) -> str:
             assert path == str(image_path)
+            assert alt_text is None
             return "m1"
 
         def create_tweet(self, text: str, reply_to_id=None, media_ids=None) -> str:
@@ -508,6 +509,54 @@ def test_cli_post_with_images_passes_media_ids(monkeypatch, tmp_path) -> None:
 
     assert result.exit_code == 0
     assert calls == [{"text": "hello", "reply_to_id": None, "media_ids": ["m1"]}]
+
+
+def test_cli_post_with_video_passes_media_id_and_alt_text(monkeypatch, tmp_path) -> None:
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"mp4")
+    calls = []
+
+    class FakeClient:
+        def upload_media(self, path: str, alt_text=None) -> str:
+            assert path == str(video_path)
+            assert alt_text == "demo clip"
+            return "v1"
+
+        def create_tweet(self, text: str, reply_to_id=None, media_ids=None) -> str:
+            calls.append({"text": text, "reply_to_id": reply_to_id, "media_ids": media_ids})
+            return "999"
+
+    monkeypatch.setattr("twitter_cli.cli.TwitterAPIv2Client", FakeClient)
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["post", "hello", "--video", str(video_path), "--alt-text", "demo clip", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [{"text": "hello", "reply_to_id": None, "media_ids": ["v1"]}]
+
+
+def test_cli_post_alt_text_requires_api_mode(monkeypatch, tmp_path) -> None:
+    image_path = tmp_path / "photo.png"
+    image_path.write_bytes(b"png")
+
+    class FakeClient:
+        def upload_media(self, path: str, alt_text=None) -> str:
+            raise AssertionError("upload_media should not be called")
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["post", "hello", "--image", str(image_path), "--alt-text", "demo", "--json"],
+    )
+
+    assert result.exit_code != 0
+    assert "--alt-text currently requires --auth-mode api." in result.output
 
 
 def test_cli_like_yaml_output(monkeypatch) -> None:

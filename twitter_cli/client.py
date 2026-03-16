@@ -426,8 +426,8 @@ class TwitterClient:
         logger.debug("Write operation delay: %.1fs", delay)
         time.sleep(delay)
 
-    def upload_media(self, file_path):
-        # type: (str) -> str
+    def upload_media(self, file_path, alt_text=None):
+        # type: (str, Any) -> str
         """Upload an image file to Twitter.  Returns the media_id string.
 
         Uses Twitter's chunked upload API (INIT → APPEND → FINALIZE).

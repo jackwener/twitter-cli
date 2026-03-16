@@ -10,7 +10,7 @@ import mimetypes
 import os
 import time
 import urllib.parse
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, Iterator, List, Optional, cast
 
 from curl_cffi import requests as _cffi_requests
 
@@ -73,7 +73,17 @@ class TwitterAPIv2Client:
         "image/tiff",
         "image/webp",
     }
+    _SUPPORTED_GIF_TYPES = {"image/gif"}
+    _SUPPORTED_VIDEO_TYPES = {
+        "video/mp4",
+        "video/quicktime",
+        "video/webm",
+        "video/mp2t",
+    }
     _MAX_IMAGE_SIZE = 5 * 1024 * 1024
+    _MAX_GIF_SIZE = 15 * 1024 * 1024
+    _MAX_VIDEO_SIZE = 512 * 1024 * 1024
+    _UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 
     def __init__(self, rate_limit_config: Optional[Dict[str, Any]] = None) -> None:
         self._access_token = os.environ.get("TWITTER_API_ACCESS_TOKEN", "").strip()
@@ -431,28 +441,71 @@ class TwitterAPIv2Client:
         self._write_delay()
         return True
 
-    def upload_media(self, path: str) -> str:
+    def upload_media(self, path: str, alt_text: Optional[str] = None) -> str:
         if not self._access_token:
             raise AuthenticationError("Official API media upload requires TWITTER_API_ACCESS_TOKEN.")
         if not os.path.isfile(path):
             raise MediaUploadError("File not found: %s" % path)
 
         file_size = os.path.getsize(path)
-        if file_size > self._MAX_IMAGE_SIZE:
+        media_type = mimetypes.guess_type(path)[0] or ""
+        media_category: Optional[str] = None
+        if media_type in self._SUPPORTED_IMAGE_TYPES:
+            max_size = self._MAX_IMAGE_SIZE
+        elif media_type in self._SUPPORTED_GIF_TYPES:
+            max_size = self._MAX_GIF_SIZE
+            media_category = "tweet_gif"
+        elif media_type in self._SUPPORTED_VIDEO_TYPES:
+            max_size = self._MAX_VIDEO_SIZE
+            media_category = "tweet_video"
+        else:
+            raise MediaUploadError(
+                "Unsupported media format: %s (supported: bmp, jpeg, png, tiff, webp, gif, mp4, mov, webm)" % media_type,
+            )
+        if file_size > max_size:
             raise MediaUploadError(
                 "File too large: %.1f MB (max %.0f MB)"
-                % (file_size / (1024 * 1024), self._MAX_IMAGE_SIZE / (1024 * 1024)),
+                % (file_size / (1024 * 1024), max_size / (1024 * 1024)),
             )
-
-        media_type = mimetypes.guess_type(path)[0] or ""
-        if media_type not in self._SUPPORTED_IMAGE_TYPES:
-            raise MediaUploadError(
-                "Unsupported image format: %s (supported: bmp, jpeg, png, tiff, webp)" % media_type,
+        if media_category is None:
+            media_id = self._upload_simple_media(path, media_type)
+        else:
+            media_id = self._upload_chunked_media(
+                path,
+                media_type,
+                file_size,
+                media_category=media_category,
             )
+        if alt_text:
+            self._apply_media_alt_text(media_id, alt_text)
+        return media_id
 
-        with open(path, "rb") as image_file:
-            media = base64.b64encode(image_file.read()).decode("ascii")
+    # ── Internals ────────────────────────────────────────────────────
 
+    def _authenticated_user_id(self) -> str:
+        if self._configured_user_id:
+            return self._configured_user_id
+        return self.fetch_me().id
+
+    def _api_headers(self, *, require_user_context: bool) -> Dict[str, str]:
+        token = self._access_token if require_user_context else (self._access_token or self._bearer_token)
+        if require_user_context and not token:
+            raise AuthenticationError(
+                "Official API user-context commands require TWITTER_API_ACCESS_TOKEN."
+            )
+        if not token:
+            raise AuthenticationError(
+                "Official API mode requires TWITTER_API_ACCESS_TOKEN or TWITTER_API_BEARER_TOKEN."
+            )
+        return {
+            "Authorization": "Bearer %s" % token,
+            "Accept": "application/json",
+            "User-Agent": "twitter-cli",
+        }
+
+    def _upload_simple_media(self, path: str, media_type: str) -> str:
+        with open(path, "rb") as media_file:
+            media = base64.b64encode(media_file.read()).decode("ascii")
         data = self._api_request(
             "POST",
             "/media/upload",
@@ -472,12 +525,82 @@ class TwitterAPIv2Client:
         self._wait_for_media(media_id, media_payload.get("processing_info"))
         return media_id
 
-    # ── Internals ────────────────────────────────────────────────────
+    def _upload_chunked_media(
+        self,
+        path: str,
+        media_type: str,
+        file_size: int,
+        *,
+        media_category: str,
+    ) -> str:
+        initialized = self._api_request(
+            "POST",
+            "/media/upload/initialize",
+            json_body={
+                "media_category": media_category,
+                "media_type": media_type,
+                "shared": False,
+                "total_bytes": file_size,
+            },
+            require_user_context=True,
+        )
+        raw_init_data = initialized.get("data")
+        init_data: Dict[str, Any] = raw_init_data if isinstance(raw_init_data, dict) else {}
+        media_id = str(init_data.get("id") or "")
+        if not media_id:
+            raise MediaUploadError("Media upload initialize did not return an id")
 
-    def _authenticated_user_id(self) -> str:
-        if self._configured_user_id:
-            return self._configured_user_id
-        return self.fetch_me().id
+        session = _get_api_session()
+        headers = self._api_headers(require_user_context=True)
+        for segment_index, chunk in enumerate(self._iter_file_chunks(path)):
+            response = session.post(
+                "%s/media/upload/%s/append" % (_API_BASE_URL, media_id),
+                headers=headers,
+                data={"segment_index": str(segment_index)},
+                files={"media": ("chunk", chunk)},
+                timeout=60,
+            )
+            payload = self._safe_json(response)
+            if response.status_code >= 400:
+                raise MediaUploadError(self._extract_error_message(payload, response.text))
+
+        finalized = self._api_request(
+            "POST",
+            "/media/upload/%s/finalize" % media_id,
+            require_user_context=True,
+        )
+        raw_finalize_data = finalized.get("data")
+        finalize_data: Dict[str, Any] = raw_finalize_data if isinstance(raw_finalize_data, dict) else {}
+        self._wait_for_media(media_id, finalize_data.get("processing_info"))
+        return media_id
+
+    def _iter_file_chunks(self, path: str) -> Iterator[bytes]:
+        with open(path, "rb") as media_file:
+            while True:
+                chunk = media_file.read(self._UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                yield chunk
+
+    def _apply_media_alt_text(self, media_id: str, alt_text: str) -> None:
+        text = alt_text.strip()
+        if not text:
+            return
+        if len(text) > 1000:
+            raise MediaUploadError("Alt text must be 1000 characters or fewer.")
+        self._api_request(
+            "POST",
+            "/media/metadata",
+            json_body={
+                "id": media_id,
+                "metadata": {
+                    "alt_text": {
+                        "text": text,
+                    }
+                },
+            },
+            require_user_context=True,
+        )
 
     def _search_path(self, scope: str) -> str:
         normalized = (scope or "recent").strip().lower()
