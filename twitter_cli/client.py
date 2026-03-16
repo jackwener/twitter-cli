@@ -38,6 +38,7 @@ from .exceptions import (
     MediaUploadError,
     NotFoundError,
     TwitterAPIError,
+    UnsupportedFeatureError,
 )
 from .graphql import (
     FALLBACK_QUERY_IDS,
@@ -279,8 +280,8 @@ class TwitterClient:
             override_base_variables=True,
         )
 
-    def fetch_search(self, query, count=20, product="Top"):
-        # type: (str, int, str) -> List[Tweet]
+    def fetch_search(self, query, count=20, product="Top", scope="recent"):
+        # type: (str, int, str, str) -> List[Tweet]
         """Search tweets by query.
 
         Args:
@@ -302,8 +303,8 @@ class TwitterClient:
             override_base_variables=True,
         )
 
-    def fetch_tweet_detail(self, tweet_id, count=20):
-        # type: (str, int) -> List[Tweet]
+    def fetch_tweet_detail(self, tweet_id, count=20, reply_scope="auto"):
+        # type: (str, int, str) -> List[Tweet]
         """Fetch a tweet and its conversation thread (replies)."""
         return self._fetch_timeline(
             "TweetDetail",
@@ -329,6 +330,10 @@ class TwitterClient:
                 "withDisallowedReplyControls": False,
             },
         )
+
+    def fetch_mentions(self, user_id, count=20):
+        # type: (str, int) -> List[Tweet]
+        raise UnsupportedFeatureError("`mentions` is supported only in official API mode.")
 
     def fetch_article(self, tweet_id):
         # type: (str) -> Tweet
@@ -379,6 +384,18 @@ class TwitterClient:
             extra_variables={"listId": list_id},
             override_base_variables=True,
         )
+
+    def fetch_list(self, list_id):
+        # type: (str) -> Any
+        raise UnsupportedFeatureError("`list-info` is supported only in official API mode.")
+
+    def fetch_owned_lists(self, user_id, count=20):
+        # type: (str, int) -> List[Any]
+        raise UnsupportedFeatureError("`owned-lists` is supported only in official API mode.")
+
+    def fetch_followed_lists(self, user_id, count=20):
+        # type: (str, int) -> List[Any]
+        raise UnsupportedFeatureError("`followed-lists` is supported only in official API mode.")
 
     def fetch_followers(self, user_id, count=20):
         # type: (str, int) -> List[UserProfile]

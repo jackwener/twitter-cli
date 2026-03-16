@@ -109,6 +109,19 @@ def test_api_client_fetch_search_parses_expansions(monkeypatch) -> None:
     assert session.calls[0][2]["sort_order"] == "recency"
 
 
+def test_api_client_fetch_search_all_scope_uses_full_archive_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
+    monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
+    session = DummySession([DummyResponse(200, {"data": [], "meta": {"result_count": 0}})])
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    tweets = client.fetch_search("python", count=1, scope="all")
+
+    assert tweets == []
+    assert session.calls[0][1].endswith("/tweets/search/all")
+
+
 def test_api_client_fetch_me_requires_user_context(monkeypatch) -> None:
     monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
     monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
@@ -199,6 +212,40 @@ def test_api_client_fetch_home_timeline_uses_reverse_chronological_endpoint(monk
     assert session.calls[1][1].endswith("/users/me/timelines/reverse_chronological")
 
 
+def test_api_client_fetch_mentions_uses_mentions_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
+    monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "id": "12",
+                            "text": "@alice hi",
+                            "author_id": "u2",
+                            "created_at": "2026-03-08T12:00:00.000Z",
+                            "public_metrics": {"like_count": 1},
+                        }
+                    ],
+                    "includes": {
+                        "users": [{"id": "u2", "name": "Bob", "username": "bob"}],
+                    },
+                    "meta": {"result_count": 1},
+                },
+            )
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    tweets = client.fetch_mentions("42", count=1)
+
+    assert [tweet.id for tweet in tweets] == ["12"]
+    assert session.calls[0][1].endswith("/users/42/mentions")
+
+
 def test_api_client_fetch_list_timeline_uses_lists_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
     monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
@@ -241,14 +288,14 @@ def test_api_client_fetch_tweet_detail_uses_lookup_and_search(monkeypatch) -> No
             DummyResponse(
                 200,
                 {
-                    "data": {
-                        "id": "123",
-                        "text": "root",
-                        "author_id": "u1",
-                        "conversation_id": "123",
-                        "created_at": "2026-03-08T12:00:00.000Z",
-                        "public_metrics": {"reply_count": 1},
-                    },
+                        "data": {
+                            "id": "123",
+                            "text": "root",
+                            "author_id": "u1",
+                            "conversation_id": "123",
+                            "created_at": "2026-03-12T12:00:00.000Z",
+                            "public_metrics": {"reply_count": 1},
+                        },
                     "includes": {
                         "users": [{"id": "u1", "name": "Alice", "username": "alice"}],
                     },
@@ -262,14 +309,14 @@ def test_api_client_fetch_tweet_detail_uses_lookup_and_search(monkeypatch) -> No
                             "id": "123",
                             "text": "root",
                             "author_id": "u1",
-                            "created_at": "2026-03-08T12:00:00.000Z",
+                            "created_at": "2026-03-12T12:00:00.000Z",
                             "public_metrics": {"reply_count": 1},
                         },
                         {
                             "id": "124",
                             "text": "reply",
                             "author_id": "u2",
-                            "created_at": "2026-03-08T12:05:00.000Z",
+                            "created_at": "2026-03-12T12:05:00.000Z",
                             "public_metrics": {"like_count": 1},
                         },
                     ],
@@ -293,6 +340,58 @@ def test_api_client_fetch_tweet_detail_uses_lookup_and_search(monkeypatch) -> No
     assert session.calls[0][1].endswith("/tweets/123")
     assert session.calls[1][1].endswith("/tweets/search/recent")
     assert session.calls[1][2]["query"] == "conversation_id:123"
+
+
+def test_api_client_fetch_tweet_detail_auto_tries_full_archive_for_old_posts(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
+    monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(
+                200,
+                {
+                    "data": {
+                        "id": "123",
+                        "text": "root",
+                        "author_id": "u1",
+                        "conversation_id": "123",
+                        "created_at": "2026-01-01T12:00:00.000Z",
+                        "public_metrics": {"reply_count": 1},
+                    },
+                    "includes": {
+                        "users": [{"id": "u1", "name": "Alice", "username": "alice"}],
+                    },
+                },
+            ),
+            DummyResponse(403, {"detail": "forbidden"}),
+            DummyResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "id": "124",
+                            "text": "recent reply",
+                            "author_id": "u2",
+                            "created_at": "2026-03-08T12:05:00.000Z",
+                            "public_metrics": {"like_count": 1},
+                        }
+                    ],
+                    "includes": {
+                        "users": [{"id": "u2", "name": "Bob", "username": "bob"}],
+                    },
+                    "meta": {"result_count": 1},
+                },
+            ),
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    tweets = client.fetch_tweet_detail("123", count=5, reply_scope="auto")
+
+    assert [tweet.id for tweet in tweets] == ["123", "124"]
+    assert session.calls[1][1].endswith("/tweets/search/all")
+    assert session.calls[2][1].endswith("/tweets/search/recent")
 
 
 def test_api_client_fetch_bookmarks_requires_user_context(monkeypatch) -> None:
@@ -370,6 +469,46 @@ def test_api_client_fetch_article_parses_article_fields(monkeypatch) -> None:
     assert tweet.article_text == "Body text"
 
 
+def test_api_client_fetch_article_merges_article_media(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
+    monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(
+                200,
+                {
+                    "data": {
+                        "id": "56",
+                        "text": "article teaser",
+                        "author_id": "u1",
+                        "created_at": "2026-03-08T12:00:00.000Z",
+                        "public_metrics": {},
+                        "article": {"title": "Title", "text": "Body text", "cover_media_key": "m2"},
+                    },
+                    "includes": {
+                        "users": [{"id": "u1", "name": "Alice", "username": "alice"}],
+                        "media": [
+                            {
+                                "media_key": "m2",
+                                "type": "photo",
+                                "url": "https://img.example/article.jpg",
+                                "width": 1280,
+                                "height": 720,
+                            }
+                        ],
+                    },
+                },
+            )
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    tweet = client.fetch_article("56")
+
+    assert tweet.media[0].url == "https://img.example/article.jpg"
+
+
 def test_api_client_fetch_user_likes_uses_liked_tweets_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
     monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
@@ -402,6 +541,94 @@ def test_api_client_fetch_user_likes_uses_liked_tweets_endpoint(monkeypatch) -> 
 
     assert [tweet.id for tweet in tweets] == ["31"]
     assert session.calls[0][1].endswith("/users/42/liked_tweets")
+
+
+def test_api_client_fetch_list_returns_metadata(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
+    monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(
+                200,
+                {
+                    "data": {
+                        "id": "200",
+                        "name": "Python",
+                        "description": "Language news",
+                        "owner_id": "u1",
+                        "follower_count": 12,
+                        "member_count": 34,
+                        "private": False,
+                        "created_at": "2026-03-01T00:00:00.000Z",
+                    },
+                    "includes": {
+                        "users": [{"id": "u1", "name": "Alice", "username": "alice"}],
+                    },
+                },
+            )
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    twitter_list = client.fetch_list("200")
+
+    assert twitter_list.name == "Python"
+    assert twitter_list.owner_screen_name == "alice"
+    assert session.calls[0][1].endswith("/lists/200")
+
+
+def test_api_client_fetch_owned_lists_uses_owned_lists_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
+    monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(
+                200,
+                {
+                    "data": [{"id": "201", "name": "Owned", "owner_id": "u1"}],
+                    "includes": {
+                        "users": [{"id": "u1", "name": "Alice", "username": "alice"}],
+                    },
+                    "meta": {"result_count": 1},
+                },
+            )
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    twitter_lists = client.fetch_owned_lists("42", count=1)
+
+    assert [twitter_list.id for twitter_list in twitter_lists] == ["201"]
+    assert session.calls[0][1].endswith("/users/42/owned_lists")
+
+
+def test_api_client_fetch_followed_lists_requires_user_context(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_ACCESS_TOKEN", "access-token")
+    monkeypatch.delenv("TWITTER_API_BEARER_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(
+                200,
+                {
+                    "data": [{"id": "202", "name": "Followed", "owner_id": "u1"}],
+                    "includes": {
+                        "users": [{"id": "u1", "name": "Alice", "username": "alice"}],
+                    },
+                    "meta": {"result_count": 1},
+                },
+            )
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    twitter_lists = client.fetch_followed_lists("42", count=1)
+
+    assert [twitter_list.id for twitter_list in twitter_lists] == ["202"]
+    assert session.calls[0][1].endswith("/users/42/followed_lists")
+    assert session.calls[0][4]["Authorization"] == "Bearer access-token"
 
 
 def test_api_client_bookmark_write_endpoints_use_user_context(monkeypatch) -> None:

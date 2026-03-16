@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import mimetypes
@@ -20,7 +21,7 @@ from .exceptions import (
     NotFoundError,
     TwitterAPIError,
 )
-from .models import Author, Metrics, Tweet, TweetMedia, UserProfile
+from .models import Author, Metrics, Tweet, TweetMedia, TwitterList, UserProfile
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ _USER_FIELDS = "created_at,description,entities,location,profile_image_url,publi
 _TWEET_FIELDS = "attachments,author_id,created_at,entities,lang,public_metrics,referenced_tweets"
 _MEDIA_FIELDS = "media_key,preview_image_url,type,url,width,height"
 _TWEET_EXPANSIONS = "author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id"
+_LIST_FIELDS = "created_at,description,follower_count,id,member_count,name,owner_id,private"
 _DETAIL_TWEET_FIELDS = (
     "article,attachments,author_id,conversation_id,created_at,entities,in_reply_to_user_id,"
     "lang,note_tweet,public_metrics,referenced_tweets"
@@ -135,7 +137,13 @@ class TwitterAPIv2Client:
             },
         )
 
-    def fetch_search(self, query: str, count: int = 20, product: str = "Top") -> List[Tweet]:
+    def fetch_search(
+        self,
+        query: str,
+        count: int = 20,
+        product: str = "Top",
+        scope: str = "recent",
+    ) -> List[Tweet]:
         search_query = query
         sort_order = "relevancy"
         normalized_product = (product or "Top").strip().lower()
@@ -149,7 +157,7 @@ class TwitterAPIv2Client:
             search_query = "%s has:videos" % query
 
         return self._paginate_tweets(
-            "/tweets/search/recent",
+            self._search_path(scope),
             count,
             {
                 "query": search_query,
@@ -173,6 +181,18 @@ class TwitterAPIv2Client:
             "/users/%s/following" % user_id,
             count,
             {"user.fields": _USER_FIELDS},
+        )
+
+    def fetch_mentions(self, user_id: str, count: int = 20) -> List[Tweet]:
+        return self._paginate_tweets(
+            "/users/%s/mentions" % user_id,
+            count,
+            {
+                "tweet.fields": _DETAIL_TWEET_FIELDS,
+                "expansions": _TWEET_EXPANSIONS,
+                "user.fields": _USER_FIELDS,
+                "media.fields": _MEDIA_FIELDS,
+            },
         )
 
     # ── Write operations ─────────────────────────────────────────────
@@ -318,7 +338,7 @@ class TwitterAPIv2Client:
             },
         )
 
-    def fetch_tweet_detail(self, tweet_id: str, count: int = 20) -> List[Tweet]:
+    def fetch_tweet_detail(self, tweet_id: str, count: int = 20, reply_scope: str = "auto") -> List[Tweet]:
         root_data, includes = self._lookup_tweet_payload(tweet_id, include_article=True)
         root_tweets = self._parse_tweets([root_data], includes)
         if not root_tweets:
@@ -333,17 +353,11 @@ class TwitterAPIv2Client:
             if conversation_id == root_tweet.id
             else "in_reply_to_tweet_id:%s" % root_tweet.id
         )
-        replies = self._paginate_tweets(
-            "/tweets/search/recent",
+        replies = self._fetch_conversation_replies(
             max(count * 2, count),
-            {
-                "query": reply_query,
-                "sort_order": "recency",
-                "tweet.fields": _DETAIL_TWEET_FIELDS,
-                "expansions": _TWEET_EXPANSIONS,
-                "user.fields": _USER_FIELDS,
-                "media.fields": _MEDIA_FIELDS,
-            },
+            reply_query,
+            root_tweet.created_at,
+            reply_scope=reply_scope,
         )
         filtered_replies = [tweet for tweet in replies if tweet.id != root_tweet.id]
         filtered_replies.sort(key=lambda tweet: tweet.created_at)
@@ -369,6 +383,33 @@ class TwitterAPIv2Client:
                 "user.fields": _USER_FIELDS,
                 "media.fields": _MEDIA_FIELDS,
             },
+        )
+
+    def fetch_list(self, list_id: str) -> TwitterList:
+        data = self._api_request(
+            "GET",
+            "/lists/%s" % list_id,
+            params={
+                "list.fields": _LIST_FIELDS,
+                "expansions": "owner_id",
+                "user.fields": _USER_FIELDS,
+            },
+        )
+        list_data = data.get("data")
+        if not isinstance(list_data, dict):
+            raise NotFoundError("List %s not found" % list_id)
+        raw_includes = data.get("includes")
+        includes: Dict[str, Any] = raw_includes if isinstance(raw_includes, dict) else {}
+        return self._parse_list(list_data, includes)
+
+    def fetch_owned_lists(self, user_id: str, count: int = 20) -> List[TwitterList]:
+        return self._paginate_lists("/users/%s/owned_lists" % user_id, count)
+
+    def fetch_followed_lists(self, user_id: str, count: int = 20) -> List[TwitterList]:
+        return self._paginate_lists(
+            "/users/%s/followed_lists" % user_id,
+            count,
+            require_user_context=True,
         )
 
     def bookmark_tweet(self, tweet_id: str) -> bool:
@@ -438,6 +479,64 @@ class TwitterAPIv2Client:
             return self._configured_user_id
         return self.fetch_me().id
 
+    def _search_path(self, scope: str) -> str:
+        normalized = (scope or "recent").strip().lower()
+        if normalized == "all":
+            return "/tweets/search/all"
+        return "/tweets/search/recent"
+
+    def _fetch_conversation_replies(
+        self,
+        count: int,
+        query: str,
+        root_created_at: str,
+        *,
+        reply_scope: str,
+    ) -> List[Tweet]:
+        params = {
+            "query": query,
+            "sort_order": "recency",
+            "tweet.fields": _DETAIL_TWEET_FIELDS,
+            "expansions": _TWEET_EXPANSIONS,
+            "user.fields": _USER_FIELDS,
+            "media.fields": _MEDIA_FIELDS,
+        }
+        scope = (reply_scope or "auto").strip().lower()
+        if scope == "recent":
+            return self._paginate_tweets("/tweets/search/recent", count, params)
+        if scope == "all":
+            return self._paginate_tweets("/tweets/search/all", count, params)
+
+        preferred_path = "/tweets/search/all" if self._is_older_than_recent_search(root_created_at) else "/tweets/search/recent"
+        replies = self._try_paginate_tweets(preferred_path, count, params)
+        if replies is not None:
+            return replies
+        fallback_path = "/tweets/search/recent" if preferred_path.endswith("/all") else "/tweets/search/all"
+        fallback = self._try_paginate_tweets(fallback_path, count, params)
+        return fallback if fallback is not None else []
+
+    def _is_older_than_recent_search(self, created_at: str) -> bool:
+        if not created_at:
+            return False
+        try:
+            created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        return created < datetime.now(timezone.utc) - timedelta(days=7)
+
+    def _try_paginate_tweets(
+        self,
+        path: str,
+        count: int,
+        params: Dict[str, Any],
+    ) -> Optional[List[Tweet]]:
+        try:
+            return self._paginate_tweets(path, count, params)
+        except TwitterAPIError as exc:
+            if path.endswith("/all") and exc.status_code in (403, 404):
+                return None
+            raise
+
     def _lookup_tweet_payload(
         self,
         tweet_id: str,
@@ -462,6 +561,58 @@ class TwitterAPIv2Client:
         raw_includes = data.get("includes")
         includes: Dict[str, Any] = raw_includes if isinstance(raw_includes, dict) else {}
         return tweet, includes
+
+    def _paginate_lists(
+        self,
+        path: str,
+        count: int,
+        *,
+        require_user_context: bool = False,
+    ) -> List[TwitterList]:
+        if count <= 0:
+            return []
+        count = min(count, self._max_count)
+        twitter_lists: List[TwitterList] = []
+        seen_ids = set()
+        next_token: Optional[str] = None
+
+        while len(twitter_lists) < count:
+            params: Dict[str, Any] = {
+                "list.fields": _LIST_FIELDS,
+                "expansions": "owner_id",
+                "user.fields": _USER_FIELDS,
+                "max_results": max(10, min(100, count - len(twitter_lists))),
+            }
+            if next_token:
+                params["pagination_token"] = next_token
+
+            data = self._api_request(
+                "GET",
+                path,
+                params=params,
+                require_user_context=require_user_context,
+            )
+            raw_items = data.get("data")
+            items: List[Any] = raw_items if isinstance(raw_items, list) else []
+            raw_includes = data.get("includes")
+            includes: Dict[str, Any] = raw_includes if isinstance(raw_includes, dict) else {}
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                twitter_list = self._parse_list(item, includes)
+                if twitter_list.id and twitter_list.id not in seen_ids:
+                    seen_ids.add(twitter_list.id)
+                    twitter_lists.append(twitter_list)
+                    if len(twitter_lists) >= count:
+                        break
+
+            meta = data.get("meta") or {}
+            next_token = str(meta.get("next_token") or "")
+            if not next_token or len(twitter_lists) >= count:
+                break
+            self._sleep_between_pages()
+
+        return twitter_lists[:count]
 
     def _wait_for_media(self, media_id: str, processing_info: Any) -> None:
         current_info: Dict[str, Any] = processing_info if isinstance(processing_info, dict) else {}
@@ -727,10 +878,12 @@ class TwitterAPIv2Client:
         article = tweet.get("article") or {}
         entities = tweet.get("entities") or {}
         media_items: List[TweetMedia] = []
+        seen_media_keys = set()
         for media_key in attachments.get("media_keys") or []:
             media = media_map.get(str(media_key))
             if not media:
                 continue
+            seen_media_keys.add(str(media_key))
             media_items.append(
                 TweetMedia(
                     type=str(media.get("type") or ""),
@@ -762,6 +915,21 @@ class TwitterAPIv2Client:
 
         article_title = self._extract_article_title(article)
         article_text = self._extract_article_text(article)
+        for media_key in self._extract_article_media_keys(article):
+            if media_key in seen_media_keys:
+                continue
+            media = media_map.get(media_key)
+            if not media:
+                continue
+            seen_media_keys.add(media_key)
+            media_items.append(
+                TweetMedia(
+                    type=str(media.get("type") or ""),
+                    url=str(media.get("url") or media.get("preview_image_url") or ""),
+                    width=cast(Optional[int], media.get("width")),
+                    height=cast(Optional[int], media.get("height")),
+                )
+            )
         text = str(note_tweet.get("text") or tweet.get("text") or "")
 
         return Tweet(
@@ -792,14 +960,51 @@ class TwitterAPIv2Client:
             article_text=article_text,
         )
 
+    def _parse_list(self, data: Dict[str, Any], includes: Dict[str, Any]) -> TwitterList:
+        raw_owners = includes.get("users")
+        owners: List[Any] = raw_owners if isinstance(raw_owners, list) else []
+        owner_map = {
+            str(owner.get("id")): owner
+            for owner in owners
+            if isinstance(owner, dict) and owner.get("id")
+        }
+        owner = owner_map.get(str(data.get("owner_id")), {})
+        return TwitterList(
+            id=str(data.get("id") or ""),
+            name=str(data.get("name") or ""),
+            owner_screen_name=str(owner.get("username") or ""),
+            description=str(data.get("description") or ""),
+            follower_count=int(data.get("follower_count") or 0),
+            member_count=int(data.get("member_count") or 0),
+            private=bool(data.get("private", False)),
+            created_at=str(data.get("created_at") or ""),
+        )
+
     def _extract_article_title(self, article: Any) -> Optional[str]:
         return self._find_nested_text(article, ["title", "headline", "display_title", "name"])
 
     def _extract_article_text(self, article: Any) -> Optional[str]:
-        return self._find_nested_text(
+        direct = self._find_nested_text(
             article,
             ["text", "plain_text", "body", "content", "description", "summary", "markdown"],
         )
+        if direct:
+            return direct
+        parts = self._collect_article_text_parts(article)
+        if parts:
+            return "\n\n".join(parts)
+        return None
+
+    def _extract_article_media_keys(self, article: Any) -> List[str]:
+        keys: List[str] = []
+        self._collect_article_media_keys(article, keys)
+        deduped: List[str] = []
+        seen = set()
+        for key in keys:
+            if key and key not in seen:
+                seen.add(key)
+                deduped.append(key)
+        return deduped
 
     def _find_nested_text(self, value: Any, candidate_keys: List[str]) -> Optional[str]:
         if isinstance(value, dict):
@@ -818,3 +1023,49 @@ class TwitterAPIv2Client:
                 if found:
                     return found
         return None
+
+    def _collect_article_text_parts(self, value: Any) -> List[str]:
+        parts: List[str] = []
+        if isinstance(value, dict):
+            for key in ("text", "plain_text", "content", "description", "summary", "markdown"):
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    parts.append(candidate.strip())
+            for nested_key in ("blocks", "items", "paragraphs", "sections", "children", "content"):
+                nested = value.get(nested_key)
+                parts.extend(self._collect_article_text_parts(nested))
+            return self._dedupe_text_parts(parts)
+        if isinstance(value, list):
+            for item in value:
+                parts.extend(self._collect_article_text_parts(item))
+        return self._dedupe_text_parts(parts)
+
+    def _collect_article_media_keys(self, value: Any, keys: List[str]) -> None:
+        if isinstance(value, dict):
+            media_key = value.get("media_key")
+            if isinstance(media_key, str):
+                keys.append(media_key)
+            cover_media_key = value.get("cover_media_key")
+            if isinstance(cover_media_key, str):
+                keys.append(cover_media_key)
+            media_keys = value.get("media_keys")
+            if isinstance(media_keys, list):
+                for media_key_item in media_keys:
+                    if isinstance(media_key_item, str):
+                        keys.append(media_key_item)
+            for nested in value.values():
+                self._collect_article_media_keys(nested, keys)
+        elif isinstance(value, list):
+            for item in value:
+                self._collect_article_media_keys(item, keys)
+
+    def _dedupe_text_parts(self, parts: List[str]) -> List[str]:
+        deduped: List[str] = []
+        seen = set()
+        for part in parts:
+            normalized = part.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped

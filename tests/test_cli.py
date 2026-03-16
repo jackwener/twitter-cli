@@ -10,7 +10,7 @@ import yaml
 
 from twitter_cli.cli import cli
 from twitter_cli.formatter import article_to_markdown, print_tweet_table
-from twitter_cli.models import Author, Metrics, Tweet, UserProfile
+from twitter_cli.models import Author, Metrics, Tweet, TwitterList, UserProfile
 from twitter_cli.serialization import tweets_to_json
 
 
@@ -122,9 +122,10 @@ def test_cli_user_error_yaml(monkeypatch) -> None:
 
 def test_cli_tweet_accepts_shared_url_with_query(monkeypatch) -> None:
     class FakeClient:
-        def fetch_tweet_detail(self, tweet_id: str, max_count: int):
+        def fetch_tweet_detail(self, tweet_id: str, max_count: int, reply_scope: str = "auto"):
             assert tweet_id == "12345"
             assert max_count == 50
+            assert reply_scope == "auto"
             return []
 
     monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
@@ -337,6 +338,66 @@ def test_cli_api_mode_feed_returns_structured_success(monkeypatch) -> None:
     assert payload["data"] == []
 
 
+def test_cli_mentions_command(monkeypatch) -> None:
+    class FakeClient:
+        def fetch_user(self, screen_name: str) -> UserProfile:
+            return UserProfile(id="42", name="Alice", screen_name=screen_name)
+
+        def fetch_mentions(self, user_id: str, count: int):
+            assert user_id == "42"
+            assert count == 50
+            return []
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr("twitter_cli.cli.load_config", lambda: {"fetch": {"count": 50}, "filter": {}, "rateLimit": {}})
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["mentions", "alice", "--json"])
+
+    assert result.exit_code == 0
+    payload = yaml.safe_load(result.output)
+    assert payload["ok"] is True
+    assert payload["data"] == []
+
+
+def test_cli_list_info_command(monkeypatch) -> None:
+    class FakeClient:
+        def fetch_list(self, list_id: str) -> TwitterList:
+            assert list_id == "123"
+            return TwitterList(id=list_id, name="Python", owner_screen_name="alice")
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["list-info", "123", "--json"])
+
+    assert result.exit_code == 0
+    payload = yaml.safe_load(result.output)
+    assert payload["data"]["id"] == "123"
+    assert payload["data"]["ownerScreenName"] == "alice"
+
+
+def test_cli_owned_lists_command(monkeypatch) -> None:
+    class FakeClient:
+        def fetch_user(self, screen_name: str) -> UserProfile:
+            return UserProfile(id="42", name="Alice", screen_name=screen_name)
+
+        def fetch_owned_lists(self, user_id: str, count: int):
+            assert user_id == "42"
+            assert count == 50
+            return [TwitterList(id="1", name="Python", owner_screen_name="alice")]
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr("twitter_cli.cli.load_config", lambda: {"fetch": {"count": 50}, "filter": {}, "rateLimit": {}})
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["owned-lists", "alice", "--json"])
+
+    assert result.exit_code == 0
+    payload = yaml.safe_load(result.output)
+    assert payload["data"][0]["id"] == "1"
+
+
 def test_cli_whoami_auto_yaml(monkeypatch) -> None:
     class FakeClient:
         def fetch_me(self) -> UserProfile:
@@ -529,9 +590,10 @@ def test_cli_search_advanced_options(monkeypatch) -> None:
     captured = {}
 
     class FakeClient:
-        def fetch_search(self, query: str, count: int, product: str):
+        def fetch_search(self, query: str, count: int, product: str, scope: str):
             captured["query"] = query
             captured["product"] = product
+            captured["scope"] = scope
             return []
 
     monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
@@ -559,14 +621,16 @@ def test_cli_search_advanced_options(monkeypatch) -> None:
         "filter:links -filter:retweets min_faves:100"
     )
     assert captured["product"] == "Latest"
+    assert captured["scope"] == "recent"
 
 
 def test_cli_search_operators_only_no_query(monkeypatch) -> None:
     captured = {}
 
     class FakeClient:
-        def fetch_search(self, query: str, count: int, product: str):
+        def fetch_search(self, query: str, count: int, product: str, scope: str):
             captured["query"] = query
+            captured["scope"] = scope
             return []
 
     monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
@@ -579,6 +643,28 @@ def test_cli_search_operators_only_no_query(monkeypatch) -> None:
     result = runner.invoke(cli, ["search", "--from", "bbc", "--json"])
     assert result.exit_code == 0, f"search failed: {result.output}"
     assert captured["query"] == "from:bbc"
+    assert captured["scope"] == "recent"
+
+
+def test_cli_search_all_scope(monkeypatch) -> None:
+    captured = {}
+
+    class FakeClient:
+        def fetch_search(self, query: str, count: int, product: str, scope: str):
+            captured["scope"] = scope
+            return []
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda: {"fetch": {"count": 50}, "filter": {}, "rateLimit": {}},
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["search", "python", "--scope", "all", "--json"])
+
+    assert result.exit_code == 0
+    assert captured["scope"] == "all"
 
 
 def test_cli_search_empty_query_no_options() -> None:
@@ -641,8 +727,9 @@ def test_show_happy_path(monkeypatch, tmp_path, tweet_factory):
     monkeypatch.setattr("twitter_cli.cache._CACHE_FILE", cache_file)
 
     class FakeClient:
-        def fetch_tweet_detail(self, tweet_id, count):
+        def fetch_tweet_detail(self, tweet_id, count, reply_scope="auto"):
             assert tweet_id == "42"
+            assert reply_scope == "auto"
             return [tw]
 
     monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
@@ -650,6 +737,26 @@ def test_show_happy_path(monkeypatch, tmp_path, tweet_factory):
 
     runner = CliRunner()
     result = runner.invoke(cli, ["show", "2"])
+    assert result.exit_code == 0
+
+
+def test_cli_tweet_reply_scope_passed_to_client(monkeypatch) -> None:
+    class FakeClient:
+        def fetch_tweet_detail(self, tweet_id: str, max_count: int, reply_scope: str = "auto"):
+            assert tweet_id == "12345"
+            assert max_count == 50
+            assert reply_scope == "all"
+            return []
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda: {"fetch": {"count": 50}, "filter": {}, "rateLimit": {}},
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["tweet", "12345", "--reply-scope", "all"])
+
     assert result.exit_code == 0
 
 

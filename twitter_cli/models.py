@@ -55,6 +55,18 @@ class Tweet:
 
 
 @dataclass
+class TwitterList:
+    id: str
+    name: str
+    owner_screen_name: str = ""
+    description: str = ""
+    follower_count: int = 0
+    member_count: int = 0
+    private: bool = False
+    created_at: str = ""
+
+
+@dataclass
 class UserProfile:
     id: str
     name: str

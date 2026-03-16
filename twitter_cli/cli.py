@@ -1,17 +1,21 @@
 """CLI entry point for twitter-cli.
 
 Read commands:
-    twitter feed                      # home timeline (For You)
+    twitter feed                      # home timeline
     twitter feed -t following         # following feed
     twitter bookmarks                 # bookmarks
     twitter search "query"            # search tweets
     twitter search "query" --from user  # advanced search
     twitter user elonmusk             # user profile
     twitter user-posts elonmusk       # user tweets
+    twitter mentions elonmusk         # user mentions
     twitter likes elonmusk            # user likes
     twitter tweet <id>                # tweet detail + replies
     twitter article <id>              # Twitter Article as Markdown
     twitter list <id>                 # list timeline
+    twitter list-info <id>            # list metadata
+    twitter owned-lists <handle>      # user-owned lists
+    twitter followed-lists <handle>   # followed lists
     twitter followers <handle>        # followers list
     twitter following <handle>        # following list
     twitter whoami                    # current user profile
@@ -54,6 +58,8 @@ from .formatter import (
     article_to_markdown,
     print_filter_stats,
     print_article,
+    print_list_detail,
+    print_list_table,
     print_tweet_detail,
     print_tweet_table,
     print_user_profile,
@@ -71,6 +77,8 @@ from .output import (
     use_rich_output,
 )
 from .serialization import (
+    twitter_list_to_dict,
+    twitter_lists_to_data,
     tweet_to_dict,
     tweets_from_json,
     tweets_to_data,
@@ -90,10 +98,12 @@ WriteOperation = Callable[[Any], WritePayload]
 
 logger = logging.getLogger(__name__)
 console = Console(stderr=True)
-FEED_TYPES = ["for-you", "following"]
+FEED_TYPES = ["home", "for-you", "following"]
 SEARCH_PRODUCTS = ["Top", "Latest", "Photos", "Videos"]
+SEARCH_SCOPES = ["recent", "all"]
 SEARCH_HAS_CHOICES = ["links", "images", "videos", "media"]
 SEARCH_EXCLUDE_CHOICES = ["retweets", "replies", "links"]
+REPLY_SCOPES = ["auto", "recent", "all"]
 AUTH_MODES = ["auto", "cookie", "api"]
 
 
@@ -403,8 +413,8 @@ def _run_bookmarks_command(max_count, as_json, as_yaml, output_file, do_filter, 
     "-t",
     "feed_type",
     type=click.Choice(FEED_TYPES),
-    default="for-you",
-    help="Feed type: for-you (algorithmic) or following (chronological).",
+    default="home",
+    help="Feed type: home, for-you, or following.",
 )
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max number of tweets to fetch.")
 @structured_output_options
@@ -432,6 +442,11 @@ def feed(ctx, feed_type, max_count, as_json, as_yaml, input_file, output_file, d
             label = "following feed" if feed_type == "following" else "home timeline"
             if rich_output:
                 console.print("📡 Fetching %s (%d tweets)...\n" % (label, fetch_count))
+                if isinstance(client, TwitterAPIv2Client) and feed_type == "for-you":
+                    console.print(
+                        "[yellow]⚠️ API mode does not expose the algorithmic For You feed. "
+                        "Using the official reverse-chronological home timeline instead.[/yellow]\n"
+                    )
             start = time.time()
             if feed_type == "following":
                 tweets = client.fetch_following_feed(fetch_count)
@@ -558,6 +573,44 @@ def user_posts(ctx, screen_name, max_count, as_json, as_yaml, output_file, full_
 
 
 @cli.command()
+@click.argument("screen_name")
+@click.option("--max", "-n", "max_count", type=int, default=None, help="Max number of tweets to fetch.")
+@structured_output_options
+@click.option("--output", "-o", "output_file", type=str, default=None, help="Save tweets to JSON file.")
+@click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
+@click.option("--full-text", is_flag=True, help="Show full tweet text in table output.")
+@click.pass_context
+def mentions(ctx, screen_name, max_count, as_json, as_yaml, output_file, do_filter, full_text):
+    # type: (Any, str, int, bool, bool, Optional[str], bool, bool) -> None
+    """Show posts mentioning a user. SCREEN_NAME is the @handle (without @)."""
+    screen_name = screen_name.lstrip("@")
+    compact = ctx.obj.get("compact", False)
+    config = load_config()
+
+    def _run():
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
+        client = _get_client(config, quiet=not rich_output)
+        if rich_output:
+            console.print("👤 Fetching @%s's profile..." % screen_name)
+        profile = client.fetch_user(screen_name)
+        _fetch_and_display(
+            lambda count: client.fetch_mentions(profile.id, count),
+            "@%s mentions" % screen_name,
+            "🔔",
+            max_count,
+            as_json,
+            as_yaml,
+            output_file,
+            do_filter,
+            config,
+            compact=compact,
+            full_text=full_text,
+        )
+
+    _run_guarded(_run)
+
+
+@cli.command()
 @click.argument("query", default="")
 @click.option(
     "--type",
@@ -566,6 +619,12 @@ def user_posts(ctx, screen_name, max_count, as_json, as_yaml, output_file, full_
     type=click.Choice(SEARCH_PRODUCTS, case_sensitive=False),
     default="Top",
     help="Search tab: Top, Latest, Photos, or Videos.",
+)
+@click.option(
+    "--scope",
+    type=click.Choice(SEARCH_SCOPES, case_sensitive=False),
+    default="recent",
+    help="Search scope: recent or all.",
 )
 @click.option("--from", "from_user", type=str, default=None, help="Only tweets from this user.")
 @click.option("--to", "to_user", type=str, default=None, help="Only tweets directed at this user.")
@@ -592,8 +651,8 @@ def user_posts(ctx, screen_name, max_count, as_json, as_yaml, output_file, full_
 @click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
 @click.option("--full-text", is_flag=True, help="Show full tweet text in table output.")
 @click.pass_context
-def search(ctx, query, product, from_user, to_user, lang, since, until, has, exclude, min_likes, min_retweets, max_count, as_json, as_yaml, output_file, do_filter, full_text):
-    # type: (Any, str, str, Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], tuple, tuple, Optional[int], Optional[int], int, bool, bool, Optional[str], bool, bool) -> None
+def search(ctx, query, product, scope, from_user, to_user, lang, since, until, has, exclude, min_likes, min_retweets, max_count, as_json, as_yaml, output_file, do_filter, full_text):
+    # type: (Any, str, str, str, Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], tuple, tuple, Optional[int], Optional[int], int, bool, bool, Optional[str], bool, bool) -> None
     """Search tweets by QUERY string with optional advanced filters.
 
     QUERY is the search keywords (optional when using advanced filters).
@@ -632,8 +691,15 @@ def search(ctx, query, product, from_user, to_user, lang, since, until, has, exc
         rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
         client = _get_client(config, quiet=not rich_output)
         _fetch_and_display(
-            lambda count: client.fetch_search(composed_query, count, product),
-            "'%s' (%s)" % (composed_query, product), "🔍", max_count, as_json, as_yaml, output_file, do_filter, config,
+            lambda count: client.fetch_search(composed_query, count, product, scope),
+            "'%s' (%s, %s)" % (composed_query, product, scope),
+            "🔍",
+            max_count,
+            as_json,
+            as_yaml,
+            output_file,
+            do_filter,
+            config,
             compact=compact, full_text=full_text,
         )
     _run_guarded(_run)
@@ -694,11 +760,17 @@ def likes(ctx, screen_name, max_count, as_json, as_yaml, output_file, do_filter,
 @cli.command()
 @click.argument("tweet_id")
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max replies to fetch.")
+@click.option(
+    "--reply-scope",
+    type=click.Choice(REPLY_SCOPES, case_sensitive=False),
+    default="auto",
+    help="Reply search scope: auto, recent, or all.",
+)
 @click.option("--full-text", is_flag=True, help="Show full reply text in table output.")
 @structured_output_options
 @click.pass_context
-def tweet(ctx, tweet_id, max_count, full_text, as_json, as_yaml):
-    # type: (Any, str, int, bool, bool, bool) -> None
+def tweet(ctx, tweet_id, max_count, reply_scope, full_text, as_json, as_yaml):
+    # type: (Any, str, int, str, bool, bool, bool) -> None
     """View a tweet and its replies. TWEET_ID is the numeric tweet ID or full URL."""
     compact = ctx.obj.get("compact", False)
     tweet_id = _normalize_tweet_id(tweet_id)
@@ -709,7 +781,11 @@ def tweet(ctx, tweet_id, max_count, full_text, as_json, as_yaml):
         if rich_output:
             console.print("🐦 Fetching tweet %s...\n" % tweet_id)
         start = time.time()
-        tweets = client.fetch_tweet_detail(tweet_id, _resolve_configured_count(config, max_count))
+        tweets = client.fetch_tweet_detail(
+            tweet_id,
+            _resolve_configured_count(config, max_count),
+            reply_scope=reply_scope,
+        )
         elapsed = time.time() - start
         if rich_output:
             console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
@@ -746,12 +822,18 @@ def _print_show_hint():
 @cli.command()
 @click.argument("index", type=click.IntRange(1))
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max replies to fetch.")
+@click.option(
+    "--reply-scope",
+    type=click.Choice(REPLY_SCOPES, case_sensitive=False),
+    default="auto",
+    help="Reply search scope: auto, recent, or all.",
+)
 @click.option("--full-text", is_flag=True, help="Show full reply text in table output.")
 @click.option("--output", "-o", "output_file", type=str, default=None, help="Save tweet detail as JSON to file.")
 @structured_output_options
 @click.pass_context
-def show(ctx, index, max_count, full_text, output_file, as_json, as_yaml):
-    # type: (Any, int, Optional[int], bool, Optional[str], bool, bool) -> None
+def show(ctx, index, max_count, reply_scope, full_text, output_file, as_json, as_yaml):
+    # type: (Any, int, Optional[int], str, bool, Optional[str], bool, bool) -> None
     """View tweet #INDEX from the last feed/search results."""
     compact = ctx.obj.get("compact", False)
 
@@ -773,7 +855,11 @@ def show(ctx, index, max_count, full_text, output_file, as_json, as_yaml):
         if rich_output:
             console.print("🐦 Fetching tweet #%d (id: %s)...\n" % (index, tweet_id))
         start = time.time()
-        tweets = client.fetch_tweet_detail(tweet_id, _resolve_configured_count(config, max_count))
+        tweets = client.fetch_tweet_detail(
+            tweet_id,
+            _resolve_configured_count(config, max_count),
+            reply_scope=reply_scope,
+        )
         elapsed = time.time() - start
         if rich_output:
             console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
@@ -854,6 +940,92 @@ def list_timeline(ctx, list_id, max_count, as_json, as_yaml, do_filter, full_tex
             compact=compact, full_text=full_text,
         )
     _run_guarded(_run)
+
+
+@cli.command(name="list-info")
+@click.argument("list_id")
+@structured_output_options
+def list_info(list_id, as_json, as_yaml):
+    # type: (str, bool, bool) -> None
+    """Show metadata for a Twitter List. LIST_ID is the numeric list ID."""
+    config = load_config()
+    try:
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
+        client = _get_client(config, quiet=not rich_output)
+        if rich_output:
+            console.print("📋 Fetching list %s..." % list_id)
+        twitter_list = client.fetch_list(list_id)
+    except (TwitterError, RuntimeError) as exc:
+        _exit_with_error(exc)
+
+    if emit_structured(twitter_list_to_dict(twitter_list), as_json=as_json, as_yaml=as_yaml):
+        return
+
+    console.print()
+    print_list_detail(twitter_list, console)
+    console.print()
+
+
+def _fetch_and_display_lists(
+    screen_name: str,
+    fetch_fn_name: str,
+    label: str,
+    max_count: Optional[int],
+    as_json: bool,
+    as_yaml: bool,
+) -> None:
+    """Shared fetch-and-display logic for list lookup commands."""
+    screen_name = screen_name.lstrip("@")
+    config = load_config()
+    try:
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
+        client = _get_client(config, quiet=not rich_output)
+        if rich_output:
+            console.print("👤 Fetching @%s's profile..." % screen_name)
+        profile = client.fetch_user(screen_name)
+        fetch_count = _resolve_configured_count(config, max_count)
+        if rich_output:
+            console.print("📚 Fetching %s (%d)...\n" % (label, fetch_count))
+        start = time.time()
+        twitter_lists = getattr(client, fetch_fn_name)(profile.id, fetch_count)
+        elapsed = time.time() - start
+        if rich_output:
+            console.print("✅ Fetched %d %s in %.1fs\n" % (len(twitter_lists), label, elapsed))
+    except (TwitterError, RuntimeError) as exc:
+        _exit_with_error(exc)
+
+    if emit_structured(twitter_lists_to_data(twitter_lists), as_json=as_json, as_yaml=as_yaml):
+        return
+
+    print_list_table(twitter_lists, console, title="📚 @%s %s — %d" % (screen_name, label, len(twitter_lists)))
+    console.print()
+
+
+@cli.command(name="owned-lists")
+@click.argument("screen_name")
+@click.option("--max", "-n", "max_count", type=int, default=None, help="Max lists to fetch.")
+@structured_output_options
+def owned_lists(screen_name, max_count, as_json, as_yaml):
+    # type: (str, int, bool, bool) -> None
+    """List Twitter Lists owned by a user. SCREEN_NAME is the @handle (without @)."""
+    _fetch_and_display_lists(screen_name, "fetch_owned_lists", "owned lists", max_count, as_json, as_yaml)
+
+
+@cli.command(name="followed-lists")
+@click.argument("screen_name")
+@click.option("--max", "-n", "max_count", type=int, default=None, help="Max lists to fetch.")
+@structured_output_options
+def followed_lists(screen_name, max_count, as_json, as_yaml):
+    # type: (str, int, bool, bool) -> None
+    """List Twitter Lists followed by a user. SCREEN_NAME is the @handle (without @)."""
+    _fetch_and_display_lists(
+        screen_name,
+        "fetch_followed_lists",
+        "followed lists",
+        max_count,
+        as_json,
+        as_yaml,
+    )
 
 
 def _fetch_and_display_users(

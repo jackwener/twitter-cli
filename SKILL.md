@@ -2,7 +2,7 @@
 name: twitter-cli
 description: Use twitter-cli for ALL Twitter/X operations — reading tweets, posting, replying, quoting, liking, retweeting, following, searching, user lookups. Invoke whenever user requests any Twitter interaction.
 author: jackwener
-version: "0.8.0"
+version: "0.8.1"
 tags:
   - twitter
   - x
@@ -14,7 +14,7 @@ tags:
 # twitter-cli — Twitter/X CLI Tool
 
 **Binary:** `twitter`
-**Credentials:** browser cookies (auto-extracted) or env vars
+**Credentials:** browser cookies (auto-extracted), cookie env vars, or official API env vars
 
 ## Setup
 
@@ -32,7 +32,7 @@ uv tool upgrade twitter-cli
 
 **IMPORTANT FOR AGENTS**: Before executing ANY twitter-cli command, you MUST first check if credentials exist. If not, you MUST proactively guide the user through the authentication process. Do NOT assume credentials are configured.
 
-**CRITICAL**: Write operations (posting tweets, replying, quoting) REQUIRE full browser cookies. Only providing `auth_token` + `ct0` via env vars may result in **226 error** ("looks like automated behavior"). For best results, use browser cookie extraction.
+**CRITICAL**: Write operations in cookie mode (posting tweets, replying, quoting) REQUIRE full browser cookies. Only providing `auth_token` + `ct0` via env vars may result in **226 error** ("looks like automated behavior"). For best results, use browser cookie extraction. Official API mode is available for supported read/write commands when API tokens are configured.
 
 ### Step 0: Check if already authenticated
 
@@ -44,6 +44,22 @@ If `AUTH_OK`, skip to [Command Reference](#command-reference).
 If `AUTH_NEEDED`, proceed to guide the user:
 
 ### Step 1: Guide user to authenticate
+
+**Method 0: Official API mode**
+
+Use this when the user has official X API credentials and wants supported API-mode commands.
+
+```bash
+export TWITTER_AUTH_MODE=api
+export TWITTER_API_BEARER_TOKEN="<bearer token>"
+
+# For user-context endpoints and write operations:
+export TWITTER_API_ACCESS_TOKEN="<oauth2 user-context access token>"
+# Optional: skip /users/me lookup on writes
+export TWITTER_API_USER_ID="<authenticated user id>"
+
+twitter status --json
+```
 
 **Method A: Browser cookie extraction (recommended)**
 
@@ -94,6 +110,8 @@ twitter whoami
 | Read works, write returns 226 | Full cookies missing — use browser cookie extraction instead of env vars |
 | `Cookie expired (401/403)` | Ask user to re-login to x.com and retry |
 | User changed password | All old cookies invalidated — re-extract |
+| API mode `401/403` | Check bearer/access token validity and user-context scope |
+| API mode full-archive search denied | Retry with `--scope recent` |
 
 ## Output Format
 
@@ -150,6 +168,7 @@ twitter whoami --json                  # JSON output
 twitter user elonmusk                  # User profile
 twitter user elonmusk --json           # JSON output
 twitter feed                           # Home timeline (For You)
+twitter feed -t home                   # Explicit home timeline
 twitter feed -t following              # Following timeline
 twitter feed --max 50                  # Limit count
 twitter feed --full-text               # Show full post body in table
@@ -161,20 +180,27 @@ twitter bookmarks --full-text          # Full text in bookmarks table
 twitter bookmarks --max 30 --yaml
 twitter search "keyword"               # Search tweets
 twitter search "AI agent" -t Latest --max 50
+twitter search "AI agent" --scope all  # Official API full-archive search
 twitter search "AI agent" --full-text  # Full text in search results
 twitter search "topic" -o results.json # Save to file
+twitter mentions elonmusk --max 20     # Mentions timeline
 twitter tweet 1234567890               # Tweet detail + replies
 twitter tweet 1234567890 --full-text   # Full text in reply table
+twitter tweet 1234567890 --reply-scope all  # Force full-archive reply lookup
 twitter tweet https://x.com/user/status/12345  # Accepts URL
 twitter show 2                         # Open tweet #2 from last feed/search list
 twitter show 2 --full-text             # Full text in reply table
+twitter show 2 --reply-scope all       # Force full-archive reply lookup
 twitter show 2 --json                  # Structured output
 twitter list 1539453138322673664       # List timeline
 twitter list 1539453138322673664 --full-text
+twitter list-info 1539453138322673664  # List metadata
 twitter user-posts elonmusk --max 20   # User's tweets
 twitter user-posts elonmusk --full-text
 twitter likes elonmusk --max 30        # User's likes (own only, see note)
 twitter likes elonmusk --full-text
+twitter owned-lists elonmusk --max 20  # Lists owned by user
+twitter followed-lists elonmusk --max 20  # Lists followed by user
 twitter followers elonmusk --max 50    # Followers
 twitter following elonmusk --max 50    # Following
 ```
@@ -206,6 +232,15 @@ twitter unfollow elonmusk                            # Unfollow user
 - Max file size: 5 MB per image
 - Max 4 images per tweet
 - Use `--image` / `-i` (repeatable)
+
+## Official API Mode Notes
+
+- `feed` and `feed -t following` both use the official reverse-chronological home timeline endpoint in API mode.
+- `search --scope all` uses the official full-archive search endpoint when the configured API access permits it.
+- `tweet` / `show` support `--reply-scope auto|recent|all`.
+  - `auto` prefers full-archive search for older posts and falls back when `/search/all` is unavailable.
+- `article` is best-effort in API mode and depends on the article fields returned by official tweet lookup.
+- `mentions`, `list-info`, `owned-lists`, and `followed-lists` are available in official API mode.
 
 ## Agent Workflows
 

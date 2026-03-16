@@ -83,7 +83,7 @@ uv sync
 ### Quick Start
 
 ```bash
-# Fetch home timeline (For You)
+# Fetch home timeline
 twitter feed
 
 # Fetch Following timeline
@@ -92,8 +92,8 @@ twitter feed -t following
 # Enable ranking filter explicitly
 twitter feed --filter
 
-# Use official API auth mode for supported commands
-twitter --auth-mode api search "AI agent" --json
+# Use official API auth mode with full-archive search
+twitter --auth-mode api search "AI agent" --scope all --json
 ```
 
 ### Usage
@@ -114,6 +114,7 @@ twitter bookmarks --max 30 --yaml
 # Search
 twitter search "Claude Code"
 twitter search "AI agent" -t Latest --max 50
+twitter search "AI agent" --scope all               # Official API full-archive search
 twitter search "AI agent" --full-text
 twitter search "机器学习" --yaml
 twitter search "python" --from elonmusk --lang en --since 2026-01-01
@@ -124,11 +125,13 @@ twitter search "trending" --filter              # Apply ranking filter
 # Tweet detail (view tweet + replies)
 twitter tweet 1234567890
 twitter tweet 1234567890 --full-text
+twitter tweet 1234567890 --reply-scope all          # Prefer full-archive reply lookup
 twitter tweet https://x.com/user/status/1234567890
 
 # Open tweet by index from last list output
 twitter show 2                         # Open tweet #2 from last feed/search
 twitter show 2 --full-text             # Full text in reply table
+twitter show 2 --reply-scope all       # Prefer full-archive reply lookup
 twitter show 2 --json                  # Structured output
 
 # Twitter Article
@@ -140,15 +143,19 @@ twitter article 1234567890 --output article.md
 # List timeline
 twitter list 1539453138322673664
 twitter list 1539453138322673664 --full-text
+twitter list-info 1539453138322673664
 
 # User
 twitter user elonmusk
 twitter user-posts elonmusk --max 20
 twitter user-posts elonmusk --full-text
 twitter user-posts elonmusk -o tweets.json
+twitter mentions elonmusk --max 20
 twitter likes elonmusk --max 30          # ⚠️ own likes only (private since Jun 2024)
 twitter likes elonmusk --full-text
 twitter likes elonmusk -o likes.json
+twitter owned-lists elonmusk --max 20
+twitter followed-lists elonmusk --max 20
 twitter followers elonmusk --max 50
 twitter following elonmusk --max 50
 
@@ -196,12 +203,14 @@ export TWITTER_API_USER_ID=...
 ```
 
 **twitter-cli API mode currently supports:**
-- Read: `feed`, `bookmarks`, `tweet`, `show`, `article`, `list`, `likes`, `search`, `user`, `user-posts`, `followers`, `following`, `status`, `whoami`
+- Read: `feed`, `bookmarks`, `tweet`, `show`, `article`, `list`, `list-info`, `likes`, `mentions`, `search`, `user`, `user-posts`, `owned-lists`, `followed-lists`, `followers`, `following`, `status`, `whoami`
 - Write: `post`, `reply`, `quote`, `delete`, `like`, `unlike`, `retweet`, `unretweet`, `follow`, `unfollow`, `bookmark`, `unbookmark`
 - Media: image upload in `post` / `reply` / `quote`
 
 **API mode notes:**
 - `feed` and `feed -t following` both use the official reverse-chronological home timeline endpoint exposed by the authenticated user's API access.
+- `search --scope all` uses the official full-archive search endpoint when your API access permits it.
+- `tweet` / `show` support `--reply-scope auto|recent|all`; `auto` prefers full-archive search for older posts and falls back when needed.
 - `article` uses the official tweet lookup response and renders article metadata/content when the API returns article fields for that post.
 
 **Chrome multi-profile**: All Chrome profiles are scanned automatically. To specify a profile:
@@ -458,7 +467,7 @@ twitter feed --filter
 twitter feed --full-text
 
 # 官方 API 模式
-twitter --auth-mode api search "AI agent" --json
+twitter --auth-mode api search "AI agent" --scope all --json
 
 # 收藏
 twitter bookmarks
@@ -467,6 +476,7 @@ twitter bookmarks --full-text
 # 搜索
 twitter search "Claude Code"
 twitter search "AI agent" -t Latest --max 50
+twitter search "AI agent" --scope all              # 官方 API 全量历史搜索
 twitter search "AI agent" --full-text
 twitter search "topic" -o results.json         # 保存到文件
 twitter search "trending" --filter              # 启用排序筛选
@@ -474,10 +484,12 @@ twitter search "trending" --filter              # 启用排序筛选
 # 推文详情
 twitter tweet 1234567890
 twitter tweet 1234567890 --full-text
+twitter tweet 1234567890 --reply-scope all
 
 # 通过序号打开上次列表里的推文
 twitter show 2                         # 打开上次 feed/search 的第 2 条
 twitter show 2 --full-text             # 在回复表格里显示完整正文
+twitter show 2 --reply-scope all
 twitter show 2 --json                  # 结构化输出
 
 # Twitter 长文
@@ -489,15 +501,19 @@ twitter article 1234567890 --output article.md
 # 列表时间线
 twitter list 1539453138322673664
 twitter list 1539453138322673664 --full-text
+twitter list-info 1539453138322673664
 
 # 用户
 twitter user elonmusk
 twitter user-posts elonmusk --max 20
 twitter user-posts elonmusk --full-text
 twitter user-posts elonmusk -o tweets.json
+twitter mentions elonmusk --max 20
 twitter likes elonmusk --max 30           # ⚠️ 仅可查看自己的点赞（2024年6月起平台已私密化）
 twitter likes elonmusk --full-text
 twitter likes elonmusk -o likes.json
+twitter owned-lists elonmusk --max 20
+twitter followed-lists elonmusk --max 20
 twitter followers elonmusk
 twitter following elonmusk
 
@@ -545,12 +561,14 @@ export TWITTER_API_USER_ID=...
 ```
 
 **twitter-cli API 模式当前支持：**
-- 读取：`feed`、`bookmarks`、`tweet`、`show`、`article`、`list`、`likes`、`search`、`user`、`user-posts`、`followers`、`following`、`status`、`whoami`
+- 读取：`feed`、`bookmarks`、`tweet`、`show`、`article`、`list`、`list-info`、`likes`、`mentions`、`search`、`user`、`user-posts`、`owned-lists`、`followed-lists`、`followers`、`following`、`status`、`whoami`
 - 写入：`post`、`reply`、`quote`、`delete`、`like`、`unlike`、`retweet`、`unretweet`、`follow`、`unfollow`、`bookmark`、`unbookmark`
 - 媒体：`post` / `reply` / `quote` 支持图片上传
 
 **API 模式说明：**
 - `feed` 和 `feed -t following` 当前都映射到官方 reverse-chronological home timeline。
+- `search --scope all` 会在权限允许时使用官方 full-archive search endpoint。
+- `tweet` / `show` 支持 `--reply-scope auto|recent|all`；`auto` 会优先对较老的推文使用 full-archive 搜索，并在必要时自动回退。
 - `article` 基于官方 tweet lookup 返回的 article 字段做 best-effort 渲染；是否有正文取决于 API 返回内容。
 
 **Chrome 多 Profile 支持**：会自动遍历所有 Chrome profile。也可以通过环境变量指定：
