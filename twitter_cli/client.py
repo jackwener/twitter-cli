@@ -47,7 +47,7 @@ from .graphql import (
     _resolve_query_id,
     _update_features_from_html,
 )
-from .models import UserProfile
+from .models import BookmarkFolder, UserProfile
 from .parser import (
     _deep_get,
     _parse_int,
@@ -182,6 +182,59 @@ class TwitterClient:
             return instructions
 
         return self._fetch_timeline("Bookmarks", count, get_instructions)
+
+    def fetch_bookmark_folders(self):
+        # type: () -> List[BookmarkFolder]
+        """Fetch all bookmark folders with pagination."""
+        folders = []  # type: List[BookmarkFolder]
+        cursor = None  # type: Optional[str]
+        max_pages = 10
+
+        for _ in range(max_pages):
+            variables = {}  # type: Dict[str, Any]
+            if cursor:
+                variables["cursor"] = cursor
+
+            data = self._graphql_get("BookmarkFoldersSlice", variables, FEATURES)
+            slice_data = _deep_get(
+                data, "data", "viewer", "user_results", "result",
+                "bookmark_collections_slice",
+            )
+            if not isinstance(slice_data, dict):
+                break
+
+            for item in slice_data.get("items", []):
+                folder_id = item.get("id")
+                folder_name = item.get("name", "")
+                if folder_id:
+                    folders.append(BookmarkFolder(id=folder_id, name=folder_name))
+
+            next_cursor = _deep_get(slice_data, "slice_info", "next_cursor")
+            if not next_cursor or next_cursor == cursor:
+                break
+            cursor = next_cursor
+
+        return folders
+
+    def fetch_bookmark_folder_timeline(self, folder_id, count=50):
+        # type: (str, int) -> List[Tweet]
+        """Fetch tweets from a bookmark folder."""
+        def get_instructions(data):
+            # type: (Any) -> Any
+            return _deep_get(
+                data, "data", "bookmark_collection_timeline", "timeline", "instructions",
+            )
+
+        return self._fetch_timeline(
+            "BookmarkFolderTimeline",
+            count,
+            get_instructions,
+            extra_variables={
+                "bookmark_collection_id": folder_id,
+                "includePromotedContent": False,
+            },
+            override_base_variables=True,
+        )
 
     def resolve_user_id(self, identifier):
         # type: (str) -> str

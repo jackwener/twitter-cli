@@ -55,6 +55,12 @@ class Tweet:
 
 
 @dataclass
+class BookmarkFolder:
+    id: str
+    name: str
+
+
+@dataclass
 class UserProfile:
     id: str
     name: str

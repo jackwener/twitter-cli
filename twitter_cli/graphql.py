@@ -47,6 +47,8 @@ FALLBACK_QUERY_IDS = {
     "CreateBookmark": "aoDbu3RHznuiSkQ9aNM67Q",
     "DeleteBookmark": "Wlmlj2-xISYCixDmuS8KNg",
     "TweetResultByRestId": "7xflPyRiUxGVbJd4uWmbfg",
+    "BookmarkFoldersSlice": "i78YDd0Tza-dV4SYs58kRg",
+    "BookmarkFolderTimeline": "hNY7X2xE2N7HVF6Qb_mu6w",
 }
 
 # ── Default feature flags ────────────────────────────────────────────────
