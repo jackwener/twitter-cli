@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import List, Optional
 
 from rich.console import Console
@@ -11,6 +12,18 @@ from rich.table import Table
 
 from .models import Tweet, UserProfile
 from .timeutil import format_local_time, format_relative_time
+
+
+def _make_console() -> Console:
+    """Create a Console that works correctly on Windows pipes.
+
+    On Windows, rich may use WriteConsoleW API directly instead of writing
+    to stdout, making output invisible to pipe/subprocess capture.
+    Using force_terminal=False in non-TTY contexts prevents this.
+    """
+    if sys.platform == "win32" and not sys.stdout.isatty():
+        return Console(force_terminal=False)
+    return Console()
 
 
 def format_number(n: int) -> str:
@@ -30,7 +43,7 @@ def print_tweet_table(
 ) -> None:
     """Print tweets as a rich table."""
     if console is None:
-        console = Console()
+        console = _make_console()
 
     if not title:
         title = "📱 Twitter — %d tweets" % len(tweets)
@@ -101,7 +114,7 @@ def print_tweet_table(
 def print_tweet_detail(tweet: Tweet, console: Optional[Console] = None) -> None:
     """Print a single tweet in detail using a rich panel."""
     if console is None:
-        console = Console()
+        console = _make_console()
 
     verified = " ✓" if tweet.author.verified else ""
     header = "@%s%s (%s)" % (tweet.author.screen_name, verified, tweet.author.name)
@@ -181,7 +194,7 @@ def article_to_markdown(tweet: Tweet) -> str:
 def print_article(tweet: Tweet, console: Optional[Console] = None) -> None:
     """Print a Twitter Article with rich formatting."""
     if console is None:
-        console = Console()
+        console = _make_console()
 
     verified = " ✓" if tweet.author.verified else ""
     title = tweet.article_title or "Twitter Article"
@@ -218,7 +231,7 @@ def print_filter_stats(
 ) -> None:
     """Print filter statistics."""
     if console is None:
-        console = Console()
+        console = _make_console()
 
     console.print(
         "📊 Filter: %d → %d tweets" % (original_count, len(filtered))
@@ -234,7 +247,7 @@ def print_filter_stats(
 def print_user_profile(user: UserProfile, console: Optional[Console] = None) -> None:
     """Print user profile as a rich panel."""
     if console is None:
-        console = Console()
+        console = _make_console()
 
     verified = " ✓" if user.verified else ""
     header = "@%s%s (%s)" % (user.screen_name, verified, user.name)
@@ -280,7 +293,7 @@ def print_user_table(
 ) -> None:
     """Print a list of users as a rich table."""
     if console is None:
-        console = Console()
+        console = _make_console()
 
     if not title:
         title = "👥 Users — %d" % len(users)

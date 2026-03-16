@@ -65,6 +65,15 @@ def _diagnose_keychain_issues(diagnostics: List[str]) -> Optional[str]:
             "  Fix: Open Keychain Access → search for \"<Browser> Safe Storage\" → Access Control → add your Terminal app.\n"
             "  Or click \"Always Allow\" when the Keychain authorization popup appears."
         )
+    if sys.platform == "win32":
+        return (
+            "Windows DPAPI cookie decryption failed.\n"
+            "  Possible causes:\n"
+            "  1. Chrome is running (locks the cookie database). Try closing Chrome first.\n"
+            "  2. browser_cookie3 may not support the latest Chrome cookie encryption format.\n"
+            "  3. If Chrome was running, admin privileges may be required for VSS shadowcopy.\n"
+            "  Workaround: Set TWITTER_AUTH_TOKEN and TWITTER_CT0 environment variables manually."
+        )
     # Linux: gnome-keyring / SecretStorage issues
     return (
         "System keyring access failed — the cookie encryption key could not be retrieved.\n"

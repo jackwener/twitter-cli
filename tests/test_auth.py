@@ -349,6 +349,22 @@ def test_diagnose_keychain_issues_ssh_hint(monkeypatch) -> None:
     assert "security unlock-keychain" in hint
 
 
+def test_diagnose_keychain_issues_windows_hint(monkeypatch) -> None:
+    """On Windows, hint should mention DPAPI and environment variable workaround."""
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.delenv("SSH_CLIENT", raising=False)
+    monkeypatch.delenv("SSH_TTY", raising=False)
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+
+    diagnostics = ["chrome: Unable to get key for cookie decryption"]
+    hint = auth._diagnose_keychain_issues(diagnostics)
+
+    assert hint is not None
+    assert "DPAPI" in hint
+    assert "TWITTER_AUTH_TOKEN" in hint
+    assert "shadowcopy" in hint
+
+
 def test_diagnose_keychain_issues_returns_none_for_unrelated_errors() -> None:
     """Should return None when diagnostics don't mention Keychain."""
     diagnostics = ["chrome[Default]=no-cookies", "firefox: profile not found"]
