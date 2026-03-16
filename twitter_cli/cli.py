@@ -31,6 +31,7 @@ Write commands:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
 import time
@@ -42,6 +43,7 @@ import click
 from rich.console import Console
 
 from . import __version__
+from .api_client import TwitterAPIv2Client, has_api_credentials
 from .auth import get_cookies
 from .cache import resolve_cached_tweet, save_tweet_cache
 from .exceptions import TwitterError
@@ -84,7 +86,7 @@ FetchTweets = Callable[[int], TweetList]
 OptionalPath = Optional[str]
 StructuredMode = Optional[str]
 WritePayload = Dict[str, Any]
-WriteOperation = Callable[[TwitterClient], WritePayload]
+WriteOperation = Callable[[Any], WritePayload]
 
 logger = logging.getLogger(__name__)
 console = Console(stderr=True)
@@ -92,6 +94,7 @@ FEED_TYPES = ["for-you", "following"]
 SEARCH_PRODUCTS = ["Top", "Latest", "Photos", "Videos"]
 SEARCH_HAS_CHOICES = ["links", "images", "videos", "media"]
 SEARCH_EXCLUDE_CHOICES = ["retweets", "replies", "links"]
+AUTH_MODES = ["auto", "cookie", "api"]
 
 
 def _agent_user_profile(profile: UserProfile) -> dict:
@@ -139,13 +142,30 @@ def _load_tweets_from_json(path):
         raise RuntimeError("Invalid tweet JSON file %s: %s" % (path, exc))
 
 
+def _resolve_auth_mode() -> str:
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.obj and ctx.obj.get("auth_mode"):
+        return str(ctx.obj["auth_mode"])
+    env_mode = os.environ.get("TWITTER_AUTH_MODE", "auto").strip().lower()
+    return env_mode if env_mode in AUTH_MODES else "auto"
+
+
 def _get_client(config=None, quiet=False):
-    # type: (Optional[Dict[str, Any]], bool) -> TwitterClient
+    # type: (Optional[Dict[str, Any]], bool) -> Any
     """Create an authenticated API client."""
+    mode = _resolve_auth_mode()
+    if mode == "auto":
+        mode = "api" if has_api_credentials() else "cookie"
+
+    rate_limit_config = (config or {}).get("rateLimit")
+    if mode == "api":
+        if not quiet:
+            console.print("\n🔐 Using official X API auth...")
+        return TwitterAPIv2Client(rate_limit_config)
+
     if not quiet:
         console.print("\n🔐 Getting Twitter cookies...")
     cookies = get_cookies()
-    rate_limit_config = (config or {}).get("rateLimit")
     return TwitterClient(
         cookies["auth_token"],
         cookies["ct0"],
@@ -290,15 +310,23 @@ def _run_write_command(
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging.")
 @click.option("--compact", "-c", is_flag=True, help="Compact output (minimal fields, LLM-friendly).")
+@click.option(
+    "--auth-mode",
+    type=click.Choice(AUTH_MODES, case_sensitive=False),
+    default=None,
+    help="Auth backend: auto, cookie, or api.",
+)
 @click.version_option(version=__version__)
 @click.pass_context
-def cli(ctx, verbose, compact):
-    # type: (Any, bool, bool) -> None
+def cli(ctx, verbose, compact, auth_mode):
+    # type: (Any, bool, bool, Optional[str]) -> None
     """twitter — Twitter/X CLI tool 🐦"""
     ensure_utf8_streams()
     _setup_logging(verbose)
     ctx.ensure_object(dict)
     ctx.obj["compact"] = compact
+    resolved = (auth_mode or os.environ.get("TWITTER_AUTH_MODE", "auto")).strip().lower()
+    ctx.obj["auth_mode"] = resolved if resolved in AUTH_MODES else "auto"
 
 
 def _fetch_and_display(fetch_fn, label, emoji, max_count, as_json, as_yaml, output_file, do_filter, config=None, compact=False, full_text=False):
@@ -888,7 +916,7 @@ _MAX_IMAGES = 4  # Twitter allows up to 4 images per tweet
 
 
 def _upload_images(client, image_paths, rich_output=True):
-    # type: (TwitterClient, tuple, bool) -> list
+    # type: (Any, tuple, bool) -> list
     """Upload images and return list of media_id strings."""
     if not image_paths:
         return []
@@ -910,7 +938,7 @@ def _write_action(emoji, action_desc, client_method, tweet_id, as_json=False, as
     """
     action_name = action_desc.lower().replace(" ", "_")
 
-    def operation(client: TwitterClient) -> WritePayload:
+    def operation(client: Any) -> WritePayload:
         getattr(client, client_method)(tweet_id)
         return {"success": True, "action": action_name, "id": tweet_id}
 
@@ -942,7 +970,7 @@ def post(text, reply_to, images, as_json, as_yaml):
     action = "Replying to %s" % reply_to if reply_to else "Posting tweet"
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
 
-    def operation(client: TwitterClient) -> WritePayload:
+    def operation(client: Any) -> WritePayload:
         media_ids = _upload_images(client, images, rich_output=rich_output)
         tweet_id = client.create_tweet(text, reply_to_id=reply_to, media_ids=media_ids or None)
         return {"success": True, "action": "post", "id": tweet_id, "url": "https://x.com/i/status/%s" % tweet_id}
@@ -969,7 +997,7 @@ def reply_tweet(tweet_id, text, images, as_json, as_yaml):
     """Reply to a tweet. TWEET_ID is the tweet to reply to, TEXT is the reply content."""
     tweet_id = _normalize_tweet_id(tweet_id)
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
-    def operation(client: TwitterClient) -> WritePayload:
+    def operation(client: Any) -> WritePayload:
         media_ids = _upload_images(client, images, rich_output=rich_output)
         new_id = client.create_tweet(text, reply_to_id=tweet_id, media_ids=media_ids or None)
         return {
@@ -1002,7 +1030,7 @@ def quote_tweet(tweet_id, text, images, as_json, as_yaml):
     """Quote-tweet a tweet. TWEET_ID is the tweet to quote, TEXT is the commentary."""
     tweet_id = _normalize_tweet_id(tweet_id)
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
-    def operation(client: TwitterClient) -> WritePayload:
+    def operation(client: Any) -> WritePayload:
         media_ids = _upload_images(client, images, rich_output=rich_output)
         new_id = client.quote_tweet(tweet_id, text, media_ids=media_ids or None)
         return {
@@ -1080,7 +1108,7 @@ def follow_user(screen_name, as_json, as_yaml):
     """Follow a user. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
 
-    def operation(client: TwitterClient) -> WritePayload:
+    def operation(client: Any) -> WritePayload:
         user_id = client.resolve_user_id(screen_name)
         client.follow_user(user_id)
         return {"success": True, "action": "follow", "screenName": screen_name, "userId": user_id}
@@ -1103,7 +1131,7 @@ def unfollow_user(screen_name, as_json, as_yaml):
     """Unfollow a user. SCREEN_NAME is the @handle (without @)."""
     screen_name = screen_name.lstrip("@")
 
-    def operation(client: TwitterClient) -> WritePayload:
+    def operation(client: Any) -> WritePayload:
         user_id = client.resolve_user_id(screen_name)
         client.unfollow_user(user_id)
         return {"success": True, "action": "unfollow", "screenName": screen_name, "userId": user_id}

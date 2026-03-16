@@ -45,6 +45,7 @@ A terminal-first CLI for Twitter/X: read timelines, bookmarks, and user profiles
 
 **Auth & Anti-Detection:**
 - Cookie auth: use browser cookies or environment variables
+- Official API v2 auth: opt into stable `--auth-mode api` with bearer/user access tokens
 - Full cookie forwarding: extracts ALL browser cookies for richer browser context
 - TLS fingerprint impersonation: `curl_cffi` with dynamic Chrome version matching
 - `x-client-transaction-id` header generation
@@ -90,6 +91,9 @@ twitter feed -t following
 
 # Enable ranking filter explicitly
 twitter feed --filter
+
+# Use official API auth mode for supported commands
+twitter --auth-mode api search "AI agent" --json
 ```
 
 ### Usage
@@ -169,12 +173,35 @@ twitter follow elonmusk --json
 
 ### Authentication
 
-twitter-cli uses this auth priority:
+twitter-cli supports two auth backends:
 
-1. **Environment variables**: `TWITTER_AUTH_TOKEN` + `TWITTER_CT0`
-2. **Browser cookies** (recommended): auto-extract from Arc/Chrome/Edge/Firefox/Brave
+1. **Cookie auth**: `TWITTER_AUTH_TOKEN` + `TWITTER_CT0`, or browser cookies auto-extracted from Arc/Chrome/Edge/Firefox/Brave
+2. **Official API v2 auth**: `TWITTER_API_BEARER_TOKEN` for read-only official endpoints, or `TWITTER_API_ACCESS_TOKEN` for OAuth 2.0 user-context commands
 
 Browser extraction is recommended — it forwards ALL Twitter cookies (not just `auth_token` + `ct0`) and aligns request headers with your local runtime, which is closer to normal browser traffic than minimal cookie auth.
+
+Choose the backend with `--auth-mode auto|cookie|api` or `TWITTER_AUTH_MODE=auto|cookie|api`.
+
+**Official API mode setup:**
+
+```bash
+# Read-only official API mode
+export TWITTER_AUTH_MODE=api
+export TWITTER_API_BEARER_TOKEN=...
+
+# OAuth 2.0 user-context mode (required for whoami/status/post/like/retweet/follow)
+export TWITTER_API_ACCESS_TOKEN=...
+# Optional: skip /users/me lookup for write actions
+export TWITTER_API_USER_ID=...
+```
+
+**Official API mode currently supports:**
+- Read: `user`, `user-posts`, `search`, `followers`, `following`, `status`, `whoami`
+- Write: `post`, `reply`, `quote`, `delete`, `like`, `unlike`, `retweet`, `unretweet`, `follow`, `unfollow`
+
+**Official API mode does not support yet:**
+- `feed`, `bookmarks`, `tweet`, `show`, `article`, `list`, `likes`, `bookmark`, `unbookmark`
+- Image upload in `post` / `reply` / `quote`
 
 **Chrome multi-profile**: All Chrome profiles are scanned automatically. To specify a profile:
 
@@ -396,6 +423,7 @@ git clone git@github.com:jackwener/twitter-cli.git .agents/skills/twitter-cli
 
 **认证与反风控:**
 - Cookie 认证：支持环境变量和浏览器自动提取
+- 官方 API v2 认证：支持通过 `--auth-mode api` 切到稳定的官方令牌模式
 - 完整 Cookie 转发：提取浏览器中所有 Twitter Cookie，保留更多浏览器上下文
 - TLS 指纹伪装：`curl_cffi` 动态匹配 Chrome 版本
 - `x-client-transaction-id` 请求头生成
@@ -427,6 +455,9 @@ twitter feed
 twitter feed -t following
 twitter feed --filter
 twitter feed --full-text
+
+# 官方 API 模式
+twitter --auth-mode api search "AI agent" --json
 
 # 收藏
 twitter bookmarks
@@ -490,12 +521,35 @@ twitter follow elonmusk --json
 
 ### 认证说明
 
-认证优先级：
+twitter-cli 现在支持两套认证后端：
 
-1. **环境变量**：`TWITTER_AUTH_TOKEN` + `TWITTER_CT0`
-2. **浏览器提取**（推荐）：Arc/Chrome/Edge/Firefox/Brave 全量 Cookie 提取
+1. **Cookie 认证**：`TWITTER_AUTH_TOKEN` + `TWITTER_CT0`，或从 Arc/Chrome/Edge/Firefox/Brave 自动提取浏览器 Cookie
+2. **官方 API v2 认证**：`TWITTER_API_BEARER_TOKEN` 用于官方只读接口；`TWITTER_API_ACCESS_TOKEN` 用于 OAuth 2.0 user context 写操作/当前用户接口
 
 推荐使用浏览器提取方式，会转发所有 Twitter Cookie，并按本机运行环境生成语言和平台请求头；它比仅发送 `auth_token` + `ct0` 更接近普通浏览器流量，但不等于完整浏览器自动化。
+
+可通过 `--auth-mode auto|cookie|api` 或 `TWITTER_AUTH_MODE=auto|cookie|api` 显式选择后端。
+
+**官方 API 模式配置：**
+
+```bash
+# 官方只读模式
+export TWITTER_AUTH_MODE=api
+export TWITTER_API_BEARER_TOKEN=...
+
+# OAuth 2.0 user context（whoami/status/post/like/retweet/follow 等需要）
+export TWITTER_API_ACCESS_TOKEN=...
+# 可选：避免写操作前额外请求 /users/me
+export TWITTER_API_USER_ID=...
+```
+
+**官方 API 模式当前支持：**
+- 读取：`user`、`user-posts`、`search`、`followers`、`following`、`status`、`whoami`
+- 写入：`post`、`reply`、`quote`、`delete`、`like`、`unlike`、`retweet`、`unretweet`、`follow`、`unfollow`
+
+**官方 API 模式暂不支持：**
+- `feed`、`bookmarks`、`tweet`、`show`、`article`、`list`、`likes`、`bookmark`、`unbookmark`
+- `post` / `reply` / `quote` 的图片上传
 
 **Chrome 多 Profile 支持**：会自动遍历所有 Chrome profile。也可以通过环境变量指定：
 

@@ -6,6 +6,7 @@ import time
 from click.testing import CliRunner
 import pytest
 from rich.console import Console
+from twitter_cli.exceptions import UnsupportedFeatureError
 import yaml
 
 from twitter_cli.cli import cli
@@ -272,6 +273,68 @@ def test_cli_whoami_command(monkeypatch) -> None:
     payload = yaml.safe_load(runner.invoke(cli, ["whoami", "--yaml"]).output)
     assert payload["ok"] is True
     assert payload["data"]["user"]["username"] == "testuser"
+
+
+def test_cli_status_explicit_api_auth_mode(monkeypatch) -> None:
+    class FakeAPIClient:
+        def __init__(self, rate_limit_config=None) -> None:
+            assert isinstance(rate_limit_config, dict)
+
+        def fetch_me(self) -> UserProfile:
+            return UserProfile(id="42", name="API User", screen_name="apiuser")
+
+    monkeypatch.setattr("twitter_cli.cli.TwitterAPIv2Client", FakeAPIClient)
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["--auth-mode", "api", "status", "--json"])
+
+    assert result.exit_code == 0
+    payload = yaml.safe_load(result.output)
+    assert payload["ok"] is True
+    assert payload["data"]["user"]["username"] == "apiuser"
+
+
+def test_cli_auto_auth_prefers_api_when_credentials_present(monkeypatch) -> None:
+    class FakeAPIClient:
+        def __init__(self, rate_limit_config=None) -> None:
+            pass
+
+        def fetch_me(self) -> UserProfile:
+            return UserProfile(id="42", name="Auto API", screen_name="autoapi")
+
+    monkeypatch.setattr("twitter_cli.cli.has_api_credentials", lambda: True)
+    monkeypatch.setattr("twitter_cli.cli.TwitterAPIv2Client", FakeAPIClient)
+    monkeypatch.setattr(
+        "twitter_cli.cli.get_cookies",
+        lambda: pytest.fail("cookie auth should not be used when API credentials are present"),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["status", "--json"])
+
+    assert result.exit_code == 0
+    payload = yaml.safe_load(result.output)
+    assert payload["data"]["user"]["username"] == "autoapi"
+
+
+def test_cli_api_mode_unsupported_feed_returns_structured_error(monkeypatch) -> None:
+    class FakeAPIClient:
+        def __init__(self, rate_limit_config=None) -> None:
+            pass
+
+        def fetch_home_timeline(self, count: int):
+            raise UnsupportedFeatureError("feed unsupported in api mode")
+
+    monkeypatch.setattr("twitter_cli.cli.TwitterAPIv2Client", FakeAPIClient)
+    monkeypatch.setattr("twitter_cli.cli.load_config", lambda: {"fetch": {"count": 5}, "filter": {}, "rateLimit": {}})
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["--auth-mode", "api", "feed", "--json"])
+
+    assert result.exit_code == 1
+    payload = yaml.safe_load(result.output)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "unsupported_operation"
 
 
 def test_cli_whoami_auto_yaml(monkeypatch) -> None:
