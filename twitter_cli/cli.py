@@ -325,7 +325,8 @@ def cli(ctx, verbose, compact, auth_mode):
     _setup_logging(verbose)
     ctx.ensure_object(dict)
     ctx.obj["compact"] = compact
-    resolved = (auth_mode or os.environ.get("TWITTER_AUTH_MODE", "auto")).strip().lower()
+    raw_auth_mode = auth_mode if auth_mode is not None else (os.environ.get("TWITTER_AUTH_MODE") or "auto")
+    resolved = raw_auth_mode.strip().lower()
     ctx.obj["auth_mode"] = resolved if resolved in AUTH_MODES else "auto"
 
 

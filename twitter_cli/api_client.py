@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import mimetypes
 import os
 import time
 import urllib.parse
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from curl_cffi import requests as _cffi_requests
 
 from .exceptions import (
     AuthenticationError,
+    MediaUploadError,
     NetworkError,
     NotFoundError,
     TwitterAPIError,
-    UnsupportedFeatureError,
 )
 from .models import Author, Metrics, Tweet, TweetMedia, UserProfile
 
@@ -28,9 +30,13 @@ _USER_FIELDS = "created_at,description,entities,location,profile_image_url,publi
 _TWEET_FIELDS = "attachments,author_id,created_at,entities,lang,public_metrics,referenced_tweets"
 _MEDIA_FIELDS = "media_key,preview_image_url,type,url,width,height"
 _TWEET_EXPANSIONS = "author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id"
-_COOKIE_HINT = (
-    "Use --auth-mode cookie for home feed, bookmarks, tweet detail, article, list timeline, "
-    "or media upload commands."
+_DETAIL_TWEET_FIELDS = (
+    "article,attachments,author_id,conversation_id,created_at,entities,in_reply_to_user_id,"
+    "lang,note_tweet,public_metrics,referenced_tweets"
+)
+_DETAIL_TWEET_EXPANSIONS = (
+    "article.cover_media,article.media_entities,author_id,attachments.media_keys,"
+    "referenced_tweets.id,referenced_tweets.id.author_id"
 )
 _api_session: Any = None
 
@@ -56,6 +62,16 @@ def _get_api_session() -> Any:
 
 class TwitterAPIv2Client:
     """Official X/Twitter API v2 client for a supported subset of commands."""
+
+    _SUPPORTED_IMAGE_TYPES = {
+        "image/bmp",
+        "image/jpeg",
+        "image/pjpeg",
+        "image/png",
+        "image/tiff",
+        "image/webp",
+    }
+    _MAX_IMAGE_SIZE = 5 * 1024 * 1024
 
     def __init__(self, rate_limit_config: Optional[Dict[str, Any]] = None) -> None:
         self._access_token = os.environ.get("TWITTER_API_ACCESS_TOKEN", "").strip()
@@ -167,13 +183,11 @@ class TwitterAPIv2Client:
         reply_to_id: Optional[str] = None,
         media_ids: Optional[List[str]] = None,
     ) -> str:
-        if media_ids:
-            raise UnsupportedFeatureError(
-                "Official API mode does not support media upload yet. %s" % _COOKIE_HINT
-            )
         body: Dict[str, Any] = {"text": text}
         if reply_to_id:
             body["reply"] = {"in_reply_to_tweet_id": reply_to_id}
+        if media_ids:
+            body["media"] = {"media_ids": media_ids}
         data = self._api_request("POST", "/tweets", json_body=body, require_user_context=True)
         created = data.get("data") or {}
         tweet_id = str(created.get("id") or "")
@@ -183,14 +197,13 @@ class TwitterAPIv2Client:
         return tweet_id
 
     def quote_tweet(self, tweet_id: str, text: str, media_ids: Optional[List[str]] = None) -> str:
+        body: Dict[str, Any] = {"text": text, "quote_tweet_id": tweet_id}
         if media_ids:
-            raise UnsupportedFeatureError(
-                "Official API mode does not support media upload yet. %s" % _COOKIE_HINT
-            )
+            body["media"] = {"media_ids": media_ids}
         data = self._api_request(
             "POST",
             "/tweets",
-            json_body={"text": text, "quote_tweet_id": tweet_id},
+            json_body=body,
             require_user_context=True,
         )
         created = data.get("data") or {}
@@ -262,49 +275,161 @@ class TwitterAPIv2Client:
         self._write_delay()
         return True
 
-    # ── Unsupported cookie-only operations ───────────────────────────
+    # ── Timeline and bookmark operations ─────────────────────────────
 
     def fetch_home_timeline(self, count: int = 20) -> List[Tweet]:
-        raise UnsupportedFeatureError("Official API mode does not expose the home timeline. %s" % _COOKIE_HINT)
-
-    def fetch_following_feed(self, count: int = 20) -> List[Tweet]:
-        raise UnsupportedFeatureError(
-            "Official API mode does not expose the following feed timeline. %s" % _COOKIE_HINT
+        return self._paginate_tweets(
+            "/users/%s/timelines/reverse_chronological" % self._authenticated_user_id(),
+            count,
+            {
+                "tweet.fields": _DETAIL_TWEET_FIELDS,
+                "expansions": _TWEET_EXPANSIONS,
+                "user.fields": _USER_FIELDS,
+                "media.fields": _MEDIA_FIELDS,
+            },
+            require_user_context=True,
         )
 
+    def fetch_following_feed(self, count: int = 20) -> List[Tweet]:
+        return self.fetch_home_timeline(count)
+
     def fetch_bookmarks(self, count: int = 20) -> List[Tweet]:
-        raise UnsupportedFeatureError("Official API mode does not expose bookmarks. %s" % _COOKIE_HINT)
+        return self._paginate_tweets(
+            "/users/%s/bookmarks" % self._authenticated_user_id(),
+            count,
+            {
+                "tweet.fields": _TWEET_FIELDS,
+                "expansions": _TWEET_EXPANSIONS,
+                "user.fields": _USER_FIELDS,
+                "media.fields": _MEDIA_FIELDS,
+            },
+            require_user_context=True,
+        )
 
     def fetch_user_likes(self, user_id: str, count: int = 20) -> List[Tweet]:
-        raise UnsupportedFeatureError(
-            "Official API mode does not support the likes timeline command yet. %s" % _COOKIE_HINT
+        return self._paginate_tweets(
+            "/users/%s/liked_tweets" % user_id,
+            count,
+            {
+                "tweet.fields": _TWEET_FIELDS,
+                "expansions": _TWEET_EXPANSIONS,
+                "user.fields": _USER_FIELDS,
+                "media.fields": _MEDIA_FIELDS,
+            },
         )
 
     def fetch_tweet_detail(self, tweet_id: str, count: int = 20) -> List[Tweet]:
-        raise UnsupportedFeatureError(
-            "Official API mode does not support tweet detail plus replies yet. %s" % _COOKIE_HINT
+        root_data, includes = self._lookup_tweet_payload(tweet_id, include_article=True)
+        root_tweets = self._parse_tweets([root_data], includes)
+        if not root_tweets:
+            raise NotFoundError("Tweet %s not found" % tweet_id)
+        root_tweet = root_tweets[0]
+        if count <= 1:
+            return [root_tweet]
+
+        conversation_id = str(root_data.get("conversation_id") or root_tweet.id or tweet_id)
+        reply_query = (
+            "conversation_id:%s" % conversation_id
+            if conversation_id == root_tweet.id
+            else "in_reply_to_tweet_id:%s" % root_tweet.id
         )
+        replies = self._paginate_tweets(
+            "/tweets/search/recent",
+            max(count * 2, count),
+            {
+                "query": reply_query,
+                "sort_order": "recency",
+                "tweet.fields": _DETAIL_TWEET_FIELDS,
+                "expansions": _TWEET_EXPANSIONS,
+                "user.fields": _USER_FIELDS,
+                "media.fields": _MEDIA_FIELDS,
+            },
+        )
+        filtered_replies = [tweet for tweet in replies if tweet.id != root_tweet.id]
+        filtered_replies.sort(key=lambda tweet: tweet.created_at)
+        return [root_tweet] + filtered_replies[: max(count - 1, 0)]
 
     def fetch_article(self, tweet_id: str) -> Tweet:
-        raise UnsupportedFeatureError("Official API mode does not support Twitter Articles yet. %s" % _COOKIE_HINT)
+        tweet_data, includes = self._lookup_tweet_payload(tweet_id, include_article=True)
+        tweets = self._parse_tweets([tweet_data], includes)
+        if not tweets:
+            raise NotFoundError("Tweet %s not found" % tweet_id)
+        article_tweet = tweets[0]
+        if article_tweet.article_title is None and article_tweet.article_text is None:
+            raise NotFoundError("Tweet %s has no article content" % tweet_id)
+        return article_tweet
 
     def fetch_list_timeline(self, list_id: str, count: int = 20) -> List[Tweet]:
-        raise UnsupportedFeatureError("Official API mode does not support list timelines yet. %s" % _COOKIE_HINT)
+        return self._paginate_tweets(
+            "/lists/%s/tweets" % list_id,
+            count,
+            {
+                "tweet.fields": _TWEET_FIELDS,
+                "expansions": _TWEET_EXPANSIONS,
+                "user.fields": _USER_FIELDS,
+                "media.fields": _MEDIA_FIELDS,
+            },
+        )
 
     def bookmark_tweet(self, tweet_id: str) -> bool:
-        raise UnsupportedFeatureError(
-            "Official API mode does not expose bookmark write endpoints. %s" % _COOKIE_HINT
+        self._api_request(
+            "POST",
+            "/users/%s/bookmarks" % self._authenticated_user_id(),
+            json_body={"tweet_id": tweet_id},
+            require_user_context=True,
         )
+        self._write_delay()
+        return True
 
     def unbookmark_tweet(self, tweet_id: str) -> bool:
-        raise UnsupportedFeatureError(
-            "Official API mode does not expose bookmark write endpoints. %s" % _COOKIE_HINT
+        self._api_request(
+            "DELETE",
+            "/users/%s/bookmarks/%s" % (self._authenticated_user_id(), tweet_id),
+            require_user_context=True,
         )
+        self._write_delay()
+        return True
 
     def upload_media(self, path: str) -> str:
-        raise UnsupportedFeatureError(
-            "Official API mode does not support media upload yet. %s" % _COOKIE_HINT
+        if not self._access_token:
+            raise AuthenticationError("Official API media upload requires TWITTER_API_ACCESS_TOKEN.")
+        if not os.path.isfile(path):
+            raise MediaUploadError("File not found: %s" % path)
+
+        file_size = os.path.getsize(path)
+        if file_size > self._MAX_IMAGE_SIZE:
+            raise MediaUploadError(
+                "File too large: %.1f MB (max %.0f MB)"
+                % (file_size / (1024 * 1024), self._MAX_IMAGE_SIZE / (1024 * 1024)),
+            )
+
+        media_type = mimetypes.guess_type(path)[0] or ""
+        if media_type not in self._SUPPORTED_IMAGE_TYPES:
+            raise MediaUploadError(
+                "Unsupported image format: %s (supported: bmp, jpeg, png, tiff, webp)" % media_type,
+            )
+
+        with open(path, "rb") as image_file:
+            media = base64.b64encode(image_file.read()).decode("ascii")
+
+        data = self._api_request(
+            "POST",
+            "/media/upload",
+            json_body={
+                "media": media,
+                "media_category": "tweet_image",
+                "media_type": media_type,
+                "shared": False,
+            },
+            require_user_context=True,
         )
+        raw_media_payload = data.get("data")
+        media_payload: Dict[str, Any] = raw_media_payload if isinstance(raw_media_payload, dict) else {}
+        media_id = str(media_payload.get("id") or "")
+        if not media_id:
+            raise MediaUploadError("Media upload did not return an id")
+        self._wait_for_media(media_id, media_payload.get("processing_info"))
+        return media_id
 
     # ── Internals ────────────────────────────────────────────────────
 
@@ -313,7 +438,63 @@ class TwitterAPIv2Client:
             return self._configured_user_id
         return self.fetch_me().id
 
-    def _paginate_tweets(self, path: str, count: int, params: Dict[str, Any]) -> List[Tweet]:
+    def _lookup_tweet_payload(
+        self,
+        tweet_id: str,
+        *,
+        include_article: bool = False,
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        expansions = _DETAIL_TWEET_EXPANSIONS if include_article else _TWEET_EXPANSIONS
+        tweet_fields = _DETAIL_TWEET_FIELDS if include_article else _TWEET_FIELDS
+        data = self._api_request(
+            "GET",
+            "/tweets/%s" % tweet_id,
+            params={
+                "tweet.fields": tweet_fields,
+                "expansions": expansions,
+                "user.fields": _USER_FIELDS,
+                "media.fields": _MEDIA_FIELDS,
+            },
+        )
+        tweet = data.get("data")
+        if not isinstance(tweet, dict):
+            raise NotFoundError("Tweet %s not found" % tweet_id)
+        raw_includes = data.get("includes")
+        includes: Dict[str, Any] = raw_includes if isinstance(raw_includes, dict) else {}
+        return tweet, includes
+
+    def _wait_for_media(self, media_id: str, processing_info: Any) -> None:
+        current_info: Dict[str, Any] = processing_info if isinstance(processing_info, dict) else {}
+        while current_info:
+            state = str(current_info.get("state") or "")
+            if state in {"", "succeeded"}:
+                return
+            if state == "failed":
+                raw_error = current_info.get("error")
+                error: Dict[str, Any] = raw_error if isinstance(raw_error, dict) else {}
+                detail = error.get("detail") or error.get("message") or "Media processing failed"
+                raise MediaUploadError(str(detail))
+            delay = max(int(current_info.get("check_after_secs") or 1), 1)
+            time.sleep(delay)
+            status = self._api_request(
+                "GET",
+                "/media/upload",
+                params={"command": "STATUS", "media_id": media_id},
+                require_user_context=True,
+            )
+            raw_data = status.get("data")
+            data: Dict[str, Any] = raw_data if isinstance(raw_data, dict) else {}
+            raw_processing_info = data.get("processing_info")
+            current_info = raw_processing_info if isinstance(raw_processing_info, dict) else {}
+
+    def _paginate_tweets(
+        self,
+        path: str,
+        count: int,
+        params: Dict[str, Any],
+        *,
+        require_user_context: bool = False,
+    ) -> List[Tweet]:
         if count <= 0:
             return []
         count = min(count, self._max_count)
@@ -327,9 +508,16 @@ class TwitterAPIv2Client:
             if next_token:
                 page_params["pagination_token"] = next_token
 
-            data = self._api_request("GET", path, params=page_params)
-            page_items = data.get("data") if isinstance(data.get("data"), list) else []
-            includes = data.get("includes") if isinstance(data.get("includes"), dict) else {}
+            data = self._api_request(
+                "GET",
+                path,
+                params=page_params,
+                require_user_context=require_user_context,
+            )
+            raw_page_items = data.get("data")
+            page_items: List[Any] = raw_page_items if isinstance(raw_page_items, list) else []
+            raw_includes = data.get("includes")
+            includes: Dict[str, Any] = raw_includes if isinstance(raw_includes, dict) else {}
             for tweet in self._parse_tweets(page_items, includes):
                 if tweet.id and tweet.id not in seen_ids:
                     seen_ids.add(tweet.id)
@@ -360,7 +548,8 @@ class TwitterAPIv2Client:
                 page_params["pagination_token"] = next_token
 
             data = self._api_request("GET", path, params=page_params)
-            items = data.get("data") if isinstance(data.get("data"), list) else []
+            raw_items = data.get("data")
+            items: List[Any] = raw_items if isinstance(raw_items, list) else []
             for item in items:
                 if not isinstance(item, dict):
                     continue
@@ -533,7 +722,9 @@ class TwitterAPIv2Client:
     ) -> Tweet:
         author_data = user_map.get(str(tweet.get("author_id")), {})
         metrics = tweet.get("public_metrics") or {}
+        note_tweet = tweet.get("note_tweet") or {}
         attachments = tweet.get("attachments") or {}
+        article = tweet.get("article") or {}
         entities = tweet.get("entities") or {}
         media_items: List[TweetMedia] = []
         for media_key in attachments.get("media_keys") or []:
@@ -544,8 +735,8 @@ class TwitterAPIv2Client:
                 TweetMedia(
                     type=str(media.get("type") or ""),
                     url=str(media.get("url") or media.get("preview_image_url") or ""),
-                    width=int(media.get("width")) if media.get("width") is not None else None,
-                    height=int(media.get("height")) if media.get("height") is not None else None,
+                    width=cast(Optional[int], media.get("width")),
+                    height=cast(Optional[int], media.get("height")),
                 )
             )
 
@@ -569,9 +760,13 @@ class TwitterAPIv2Client:
             if ref_type == "retweeted":
                 is_retweet = True
 
+        article_title = self._extract_article_title(article)
+        article_text = self._extract_article_text(article)
+        text = str(note_tweet.get("text") or tweet.get("text") or "")
+
         return Tweet(
             id=str(tweet.get("id") or ""),
-            text=str(tweet.get("text") or ""),
+            text=text,
             author=Author(
                 id=str(author_data.get("id") or tweet.get("author_id") or ""),
                 name=str(author_data.get("name") or ""),
@@ -593,4 +788,33 @@ class TwitterAPIv2Client:
             is_retweet=is_retweet,
             lang=str(tweet.get("lang") or ""),
             quoted_tweet=quoted_tweet,
+            article_title=article_title,
+            article_text=article_text,
         )
+
+    def _extract_article_title(self, article: Any) -> Optional[str]:
+        return self._find_nested_text(article, ["title", "headline", "display_title", "name"])
+
+    def _extract_article_text(self, article: Any) -> Optional[str]:
+        return self._find_nested_text(
+            article,
+            ["text", "plain_text", "body", "content", "description", "summary", "markdown"],
+        )
+
+    def _find_nested_text(self, value: Any, candidate_keys: List[str]) -> Optional[str]:
+        if isinstance(value, dict):
+            for key in candidate_keys:
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            for nested in value.values():
+                found = self._find_nested_text(nested, candidate_keys)
+                if found:
+                    return found
+            return None
+        if isinstance(value, list):
+            for item in value:
+                found = self._find_nested_text(item, candidate_keys)
+                if found:
+                    return found
+        return None

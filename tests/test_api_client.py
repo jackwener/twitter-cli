@@ -136,6 +136,22 @@ def test_api_client_create_tweet_uses_access_token(monkeypatch) -> None:
     assert json.loads(data) == {"text": "hi"}
 
 
+def test_api_client_create_tweet_supports_media_ids(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_ACCESS_TOKEN", "access-token")
+    monkeypatch.delenv("TWITTER_API_BEARER_TOKEN", raising=False)
+    session = DummySession([DummyResponse(200, {"data": {"id": "123", "text": "hi"}})])
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    tweet_id = client.create_tweet("hi", media_ids=["m1", "m2"])
+
+    assert tweet_id == "123"
+    assert json.loads(session.calls[0][3]) == {
+        "text": "hi",
+        "media": {"media_ids": ["m1", "m2"]},
+    }
+
+
 def test_api_client_fetch_user_404_maps_to_not_found(monkeypatch) -> None:
     monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
     session = DummySession([DummyResponse(404, {"title": "Not Found Error", "detail": "User not found"})])
@@ -145,3 +161,285 @@ def test_api_client_fetch_user_404_maps_to_not_found(monkeypatch) -> None:
 
     with pytest.raises(NotFoundError, match="User not found"):
         client.fetch_user("missing")
+
+
+def test_api_client_fetch_home_timeline_uses_reverse_chronological_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_ACCESS_TOKEN", "access-token")
+    monkeypatch.delenv("TWITTER_API_BEARER_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(200, {"data": {"id": "me", "name": "Alice", "username": "alice"}}),
+            DummyResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "id": "10",
+                            "text": "timeline post",
+                            "author_id": "u1",
+                            "created_at": "2026-03-08T12:00:00.000Z",
+                            "public_metrics": {"like_count": 2},
+                        }
+                    ],
+                    "includes": {
+                        "users": [{"id": "u1", "name": "Alice", "username": "alice"}],
+                    },
+                    "meta": {"result_count": 1},
+                },
+            ),
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    tweets = client.fetch_home_timeline(count=1)
+
+    assert [tweet.id for tweet in tweets] == ["10"]
+    assert session.calls[0][1].endswith("/users/me")
+    assert session.calls[1][1].endswith("/users/me/timelines/reverse_chronological")
+
+
+def test_api_client_fetch_list_timeline_uses_lists_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
+    monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "id": "11",
+                            "text": "from a list",
+                            "author_id": "u1",
+                            "created_at": "2026-03-08T12:00:00.000Z",
+                            "public_metrics": {"like_count": 5},
+                        }
+                    ],
+                    "includes": {
+                        "users": [{"id": "u1", "name": "Alice", "username": "alice"}],
+                    },
+                    "meta": {"result_count": 1},
+                },
+            )
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    tweets = client.fetch_list_timeline("123", count=1)
+
+    assert [tweet.id for tweet in tweets] == ["11"]
+    assert session.calls[0][1].endswith("/lists/123/tweets")
+
+
+def test_api_client_fetch_tweet_detail_uses_lookup_and_search(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
+    monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(
+                200,
+                {
+                    "data": {
+                        "id": "123",
+                        "text": "root",
+                        "author_id": "u1",
+                        "conversation_id": "123",
+                        "created_at": "2026-03-08T12:00:00.000Z",
+                        "public_metrics": {"reply_count": 1},
+                    },
+                    "includes": {
+                        "users": [{"id": "u1", "name": "Alice", "username": "alice"}],
+                    },
+                },
+            ),
+            DummyResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "id": "123",
+                            "text": "root",
+                            "author_id": "u1",
+                            "created_at": "2026-03-08T12:00:00.000Z",
+                            "public_metrics": {"reply_count": 1},
+                        },
+                        {
+                            "id": "124",
+                            "text": "reply",
+                            "author_id": "u2",
+                            "created_at": "2026-03-08T12:05:00.000Z",
+                            "public_metrics": {"like_count": 1},
+                        },
+                    ],
+                    "includes": {
+                        "users": [
+                            {"id": "u1", "name": "Alice", "username": "alice"},
+                            {"id": "u2", "name": "Bob", "username": "bob"},
+                        ],
+                    },
+                    "meta": {"result_count": 2},
+                },
+            ),
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    tweets = client.fetch_tweet_detail("123", count=5)
+
+    assert [tweet.id for tweet in tweets] == ["123", "124"]
+    assert session.calls[0][1].endswith("/tweets/123")
+    assert session.calls[1][1].endswith("/tweets/search/recent")
+    assert session.calls[1][2]["query"] == "conversation_id:123"
+
+
+def test_api_client_fetch_bookmarks_requires_user_context(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_ACCESS_TOKEN", "access-token")
+    monkeypatch.delenv("TWITTER_API_BEARER_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(
+                200,
+                {
+                    "data": {"id": "me", "name": "Alice", "username": "alice"},
+                },
+            ),
+            DummyResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "id": "21",
+                            "text": "saved post",
+                            "author_id": "u2",
+                            "created_at": "2026-03-08T12:00:00.000Z",
+                            "public_metrics": {"bookmark_count": 3},
+                        }
+                    ],
+                    "includes": {
+                        "users": [{"id": "u2", "name": "Bob", "username": "bob"}],
+                    },
+                    "meta": {"result_count": 1},
+                },
+            ),
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    tweets = client.fetch_bookmarks(count=1)
+
+    assert [tweet.id for tweet in tweets] == ["21"]
+    assert session.calls[0][1].endswith("/users/me")
+    assert session.calls[1][1].endswith("/users/me/bookmarks")
+    assert session.calls[1][4]["Authorization"] == "Bearer access-token"
+
+
+def test_api_client_fetch_article_parses_article_fields(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
+    monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(
+                200,
+                {
+                    "data": {
+                        "id": "55",
+                        "text": "article teaser",
+                        "author_id": "u1",
+                        "created_at": "2026-03-08T12:00:00.000Z",
+                        "public_metrics": {"like_count": 4},
+                        "article": {"title": "Title", "text": "Body text"},
+                    },
+                    "includes": {
+                        "users": [{"id": "u1", "name": "Alice", "username": "alice"}],
+                    },
+                },
+            )
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    tweet = client.fetch_article("55")
+
+    assert tweet.id == "55"
+    assert tweet.article_title == "Title"
+    assert tweet.article_text == "Body text"
+
+
+def test_api_client_fetch_user_likes_uses_liked_tweets_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_BEARER_TOKEN", "bearer-token")
+    monkeypatch.delenv("TWITTER_API_ACCESS_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "id": "31",
+                            "text": "liked post",
+                            "author_id": "u3",
+                            "created_at": "2026-03-08T12:00:00.000Z",
+                            "public_metrics": {"like_count": 7},
+                        }
+                    ],
+                    "includes": {
+                        "users": [{"id": "u3", "name": "Cara", "username": "cara"}],
+                    },
+                    "meta": {"result_count": 1},
+                },
+            )
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    tweets = client.fetch_user_likes("42", count=1)
+
+    assert [tweet.id for tweet in tweets] == ["31"]
+    assert session.calls[0][1].endswith("/users/42/liked_tweets")
+
+
+def test_api_client_bookmark_write_endpoints_use_user_context(monkeypatch) -> None:
+    monkeypatch.setenv("TWITTER_API_ACCESS_TOKEN", "access-token")
+    monkeypatch.delenv("TWITTER_API_BEARER_TOKEN", raising=False)
+    session = DummySession(
+        [
+            DummyResponse(200, {"data": {"id": "me", "name": "Alice", "username": "alice"}}),
+            DummyResponse(200, {"data": {"bookmarked": True}}),
+            DummyResponse(200, {"data": {"removed": True}}),
+        ]
+    )
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+
+    assert client.bookmark_tweet("99") is True
+    assert client.unbookmark_tweet("99") is True
+    assert session.calls[1][0] == "POST"
+    assert session.calls[1][1].endswith("/users/me/bookmarks")
+    assert json.loads(session.calls[1][3]) == {"tweet_id": "99"}
+    assert session.calls[2][0] == "DELETE"
+    assert session.calls[2][1].endswith("/users/me/bookmarks/99")
+
+
+def test_api_client_upload_media_uses_v2_media_endpoint(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("TWITTER_API_ACCESS_TOKEN", "access-token")
+    monkeypatch.delenv("TWITTER_API_BEARER_TOKEN", raising=False)
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+    session = DummySession([DummyResponse(200, {"data": {"id": "m1"}})])
+    monkeypatch.setattr("twitter_cli.api_client._get_api_session", lambda: session)
+
+    client = TwitterAPIv2Client({"requestDelay": 0, "maxRetries": 1})
+    media_id = client.upload_media(str(image_path))
+
+    assert media_id == "m1"
+    assert session.calls[0][1].endswith("/media/upload")
+    payload = json.loads(session.calls[0][3])
+    assert payload["media_category"] == "tweet_image"
+    assert payload["media_type"] == "image/png"

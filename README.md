@@ -189,19 +189,20 @@ Choose the backend with `--auth-mode auto|cookie|api` or `TWITTER_AUTH_MODE=auto
 export TWITTER_AUTH_MODE=api
 export TWITTER_API_BEARER_TOKEN=...
 
-# OAuth 2.0 user-context mode (required for whoami/status/post/like/retweet/follow)
+# OAuth 2.0 user-context mode (required for whoami/status/post/like/retweet/follow/bookmarks)
 export TWITTER_API_ACCESS_TOKEN=...
 # Optional: skip /users/me lookup for write actions
 export TWITTER_API_USER_ID=...
 ```
 
-**Official API mode currently supports:**
-- Read: `user`, `user-posts`, `search`, `followers`, `following`, `status`, `whoami`
-- Write: `post`, `reply`, `quote`, `delete`, `like`, `unlike`, `retweet`, `unretweet`, `follow`, `unfollow`
+**twitter-cli API mode currently supports:**
+- Read: `feed`, `bookmarks`, `tweet`, `show`, `article`, `list`, `likes`, `search`, `user`, `user-posts`, `followers`, `following`, `status`, `whoami`
+- Write: `post`, `reply`, `quote`, `delete`, `like`, `unlike`, `retweet`, `unretweet`, `follow`, `unfollow`, `bookmark`, `unbookmark`
+- Media: image upload in `post` / `reply` / `quote`
 
-**Official API mode does not support yet:**
-- `feed`, `bookmarks`, `tweet`, `show`, `article`, `list`, `likes`, `bookmark`, `unbookmark`
-- Image upload in `post` / `reply` / `quote`
+**API mode notes:**
+- `feed` and `feed -t following` both use the official reverse-chronological home timeline endpoint exposed by the authenticated user's API access.
+- `article` uses the official tweet lookup response and renders article metadata/content when the API returns article fields for that post.
 
 **Chrome multi-profile**: All Chrome profiles are scanned automatically. To specify a profile:
 

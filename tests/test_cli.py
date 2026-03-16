@@ -6,7 +6,6 @@ import time
 from click.testing import CliRunner
 import pytest
 from rich.console import Console
-from twitter_cli.exceptions import UnsupportedFeatureError
 import yaml
 
 from twitter_cli.cli import cli
@@ -317,13 +316,14 @@ def test_cli_auto_auth_prefers_api_when_credentials_present(monkeypatch) -> None
     assert payload["data"]["user"]["username"] == "autoapi"
 
 
-def test_cli_api_mode_unsupported_feed_returns_structured_error(monkeypatch) -> None:
+def test_cli_api_mode_feed_returns_structured_success(monkeypatch) -> None:
     class FakeAPIClient:
         def __init__(self, rate_limit_config=None) -> None:
             pass
 
         def fetch_home_timeline(self, count: int):
-            raise UnsupportedFeatureError("feed unsupported in api mode")
+            assert count == 5
+            return []
 
     monkeypatch.setattr("twitter_cli.cli.TwitterAPIv2Client", FakeAPIClient)
     monkeypatch.setattr("twitter_cli.cli.load_config", lambda: {"fetch": {"count": 5}, "filter": {}, "rateLimit": {}})
@@ -331,10 +331,10 @@ def test_cli_api_mode_unsupported_feed_returns_structured_error(monkeypatch) -> 
 
     result = runner.invoke(cli, ["--auth-mode", "api", "feed", "--json"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 0
     payload = yaml.safe_load(result.output)
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "unsupported_operation"
+    assert payload["ok"] is True
+    assert payload["data"] == []
 
 
 def test_cli_whoami_auto_yaml(monkeypatch) -> None:
@@ -424,6 +424,29 @@ def test_cli_post_json_output(monkeypatch) -> None:
     assert payload["ok"] is True
     assert payload["data"]["action"] == "post"
     assert payload["data"]["id"] == "999"
+
+
+def test_cli_post_with_images_passes_media_ids(monkeypatch, tmp_path) -> None:
+    image_path = tmp_path / "photo.png"
+    image_path.write_bytes(b"png")
+    calls = []
+
+    class FakeClient:
+        def upload_media(self, path: str) -> str:
+            assert path == str(image_path)
+            return "m1"
+
+        def create_tweet(self, text: str, reply_to_id=None, media_ids=None) -> str:
+            calls.append({"text": text, "reply_to_id": reply_to_id, "media_ids": media_ids})
+            return "999"
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["post", "hello", "--image", str(image_path), "--json"])
+
+    assert result.exit_code == 0
+    assert calls == [{"text": "hello", "reply_to_id": None, "media_ids": ["m1"]}]
 
 
 def test_cli_like_yaml_output(monkeypatch) -> None:
