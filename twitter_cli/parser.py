@@ -235,7 +235,6 @@ def _find_article_caption(value):
                 return found
     return None
 
-
 def _extract_article_images(block, entity_map, media_url_map):
     # type: (Dict[str, Any], Dict[str, Any], Dict[str, str]) -> List[str]
     """Convert atomic Draft.js image entities to Markdown image lines."""
