@@ -554,6 +554,71 @@ class TestParseArticle:
             ),
         }
 
+    def test_preserves_markdown_and_images_in_mixed_atomic_blocks(self):
+        result = {
+            "article": {
+                "article_results": {
+                    "result": {
+                        "title": "Mixed article",
+                        "content_state": {
+                            "blocks": [
+                                {"key": "a", "type": "unstyled", "text": "Intro", "entityRanges": []},
+                                {
+                                    "key": "b",
+                                    "type": "atomic",
+                                    "text": " ",
+                                    "entityRanges": [{"offset": 0, "length": 1, "key": 4}],
+                                },
+                                {
+                                    "key": "c",
+                                    "type": "atomic",
+                                    "text": " ",
+                                    "entityRanges": [{"offset": 0, "length": 1, "key": 5}],
+                                },
+                                {"key": "d", "type": "unstyled", "text": "Outro", "entityRanges": []},
+                            ],
+                            "entityMap": [
+                                {
+                                    "key": "4",
+                                    "value": {
+                                        "type": "MARKDOWN",
+                                        "data": {"markdown": "```markdown\nconst answer = 42;\n```"},
+                                    },
+                                },
+                                {
+                                    "key": "5",
+                                    "value": {
+                                        "type": "MEDIA",
+                                        "data": {"mediaItems": [{"mediaId": "2030504404391194624"}]},
+                                    },
+                                },
+                            ],
+                        },
+                        "media_entities": [
+                            {
+                                "media_id": "2030504404391194624",
+                                "media_info": {
+                                    "original_img_url": "https://pbs.twimg.com/media/example.png"
+                                },
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+
+        parsed = _parse_article(result)
+
+        assert parsed == {
+            "article_title": "Mixed article",
+            "article_text": (
+                "Intro\n\n"
+                "```markdown\nconst answer = 42;\n```\n\n"
+                "![](https://pbs.twimg.com/media/example.png)\n\n"
+                "Outro"
+            ),
+        }
+
 
 # ── TwitterClient._parse_tweet_result ─────────────────────────────────────
 
