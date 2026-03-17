@@ -370,6 +370,25 @@ def _run_bookmarks_command(max_count, as_json, as_yaml, output_file, do_filter, 
     _run_guarded(_run)
 
 
+def _inherit_option(ctx, name, value):
+    # type: (click.Context, str, Any) -> Any
+    """Allow parent group options to flow into subcommands when omitted locally."""
+    if value is not None:
+        return value
+    parent = getattr(ctx, "parent", None)
+    if parent is None:
+        return value
+    return parent.params.get(name)
+
+
+def _inherit_flag(ctx, name, value):
+    # type: (click.Context, str, bool) -> bool
+    parent = getattr(ctx, "parent", None)
+    if parent is None:
+        return value
+    return bool(value or parent.params.get(name, False))
+
+
 @cli.command()
 @click.option(
     "--type",
@@ -489,9 +508,10 @@ def bookmarks(ctx, max_count, as_json, as_yaml, output_file, do_filter, full_tex
 @structured_output_options
 @click.option("--output", "-o", "output_file", type=str, default=None, help="Save tweets to JSON file.")
 @click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
+@click.option("--full-text", is_flag=True, help="Show full tweet text in table output.")
 @click.pass_context
-def bookmarks_folders(ctx, folder_id, max_count, since, as_json, as_yaml, output_file, do_filter):
-    # type: (Any, Optional[str], Optional[int], Optional[str], bool, bool, Optional[str], bool) -> None
+def bookmarks_folders(ctx, folder_id, max_count, since, as_json, as_yaml, output_file, do_filter, full_text):
+    # type: (Any, Optional[str], Optional[int], Optional[str], bool, bool, Optional[str], bool, bool) -> None
     """List bookmark folders, or fetch tweets from a folder.
 
     \b
@@ -502,17 +522,23 @@ def bookmarks_folders(ctx, folder_id, max_count, since, as_json, as_yaml, output
         twitter bookmarks folders <id> --since 2026-01-01
     """
     compact = ctx.obj.get("compact", False)
+    max_count = _inherit_option(ctx, "max_count", max_count)
+    as_json = _inherit_flag(ctx, "as_json", as_json)
+    as_yaml = _inherit_flag(ctx, "as_yaml", as_yaml)
+    output_file = _inherit_option(ctx, "output_file", output_file)
+    do_filter = _inherit_flag(ctx, "do_filter", do_filter)
+    full_text = _inherit_flag(ctx, "full_text", full_text)
 
     if folder_id is None:
-        _run_list_bookmark_folders(as_json, as_yaml, compact)
+        _run_list_bookmark_folders(as_json, as_yaml, compact, output_file)
     else:
         _run_bookmark_folder_timeline(
-            folder_id, max_count, since, as_json, as_yaml, output_file, do_filter, compact,
+            folder_id, max_count, since, as_json, as_yaml, output_file, do_filter, compact, full_text,
         )
 
 
-def _run_list_bookmark_folders(as_json, as_yaml, compact):
-    # type: (bool, bool, bool) -> None
+def _run_list_bookmark_folders(as_json, as_yaml, compact, output_file=None):
+    # type: (bool, bool, bool, Optional[str]) -> None
     config = load_config()
     rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
 
@@ -526,6 +552,12 @@ def _run_list_bookmark_folders(as_json, as_yaml, compact):
 
         from .serialization import bookmark_folders_to_data
         data = bookmark_folders_to_data(folders)
+
+        if output_file:
+            import json as _json
+            Path(output_file).write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            if rich_output:
+                console.print("💾 Saved to %s\n" % output_file)
 
         if compact:
             import json as _json
@@ -561,7 +593,6 @@ def _parse_since_date(since_str):
 def _filter_tweets_since(tweets, since_str):
     # type: (List[Tweet], str) -> List[Tweet]
     """Filter tweets to only those created after the given date."""
-    from datetime import datetime, timezone
     from email.utils import parsedate_to_datetime
     cutoff = _parse_since_date(since_str)
     filtered = []
@@ -577,8 +608,8 @@ def _filter_tweets_since(tweets, since_str):
     return filtered
 
 
-def _run_bookmark_folder_timeline(folder_id, max_count, since, as_json, as_yaml, output_file, do_filter, compact):
-    # type: (str, Optional[int], Optional[str], bool, bool, Optional[str], bool, bool) -> None
+def _run_bookmark_folder_timeline(folder_id, max_count, since, as_json, as_yaml, output_file, do_filter, compact, full_text=False):
+    # type: (str, Optional[int], Optional[str], bool, bool, Optional[str], bool, bool, bool) -> None
     config = load_config()
 
     def _run():
@@ -601,6 +632,7 @@ def _run_bookmark_folder_timeline(folder_id, max_count, since, as_json, as_yaml,
             do_filter,
             config,
             compact=compact,
+            full_text=full_text,
         )
 
     _run_guarded(_run)

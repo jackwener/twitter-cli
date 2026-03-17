@@ -10,7 +10,7 @@ import yaml
 
 from twitter_cli.cli import cli
 from twitter_cli.formatter import article_to_markdown, print_tweet_table
-from twitter_cli.models import Author, Metrics, Tweet, UserProfile
+from twitter_cli.models import Author, BookmarkFolder, Metrics, Tweet, UserProfile
 from twitter_cli.serialization import tweets_to_json
 
 
@@ -252,6 +252,93 @@ def test_cli_bookmark_alias_works(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert calls == ["123"]
+
+
+def test_cli_bookmarks_folders_inherits_parent_options(monkeypatch) -> None:
+    calls = []
+
+    def fake_folder_timeline(
+        folder_id: str,
+        max_count: int | None,
+        since: str | None,
+        as_json: bool,
+        as_yaml: bool,
+        output_file: str | None,
+        do_filter: bool,
+        compact: bool,
+        full_text: bool,
+    ) -> None:
+        calls.append(
+            (
+                folder_id,
+                max_count,
+                since,
+                as_json,
+                as_yaml,
+                output_file,
+                do_filter,
+                compact,
+                full_text,
+            )
+        )
+
+    monkeypatch.setattr("twitter_cli.cli._run_bookmark_folder_timeline", fake_folder_timeline)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["bookmarks", "--json", "--full-text", "-n", "7", "-o", "root.json", "--filter", "folders", "123"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("123", 7, None, True, False, "root.json", True, False, True)]
+
+
+def test_cli_bookmarks_folders_list_inherits_parent_output_options(monkeypatch) -> None:
+    calls = []
+
+    def fake_list_bookmark_folders(
+        as_json: bool,
+        as_yaml: bool,
+        compact: bool,
+        output_file: str | None,
+    ) -> None:
+        calls.append((as_json, as_yaml, compact, output_file))
+
+    monkeypatch.setattr("twitter_cli.cli._run_list_bookmark_folders", fake_list_bookmark_folders)
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["bookmarks", "--json", "-o", "folders.json", "folders"])
+
+    assert result.exit_code == 0
+    assert calls == [(True, False, False, "folders.json")]
+
+
+def test_cli_bookmarks_folders_list_writes_output_file(monkeypatch, tmp_path) -> None:
+    class FakeClient:
+        def fetch_bookmark_folders(self) -> list[BookmarkFolder]:
+            return [BookmarkFolder(id="f1", name="Reading"), BookmarkFolder(id="f2", name="Research")]
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr("twitter_cli.cli.load_config", lambda: {})
+    output_path = tmp_path / "folders.json"
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["bookmarks", "folders", "--json", "--output", str(output_path)],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["data"][0]["id"] == "f1"
+
+    saved = json.loads(output_path.read_text(encoding="utf-8"))
+    assert saved == [
+        {"id": "f1", "name": "Reading"},
+        {"id": "f2", "name": "Research"},
+    ]
 
 
 def test_cli_whoami_command(monkeypatch) -> None:
