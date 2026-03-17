@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Iterable, List, Optional
 
-from .models import Author, Metrics, Tweet, TweetMedia, UserProfile
+from .models import Author, BookmarkFolder, Metrics, Tweet, TweetMedia, UserProfile
 from .timeutil import format_iso8601, format_local_time
 
 
@@ -173,6 +173,19 @@ def tweets_to_compact_json(tweets: Iterable[Tweet]) -> str:
         ensure_ascii=False,
         indent=2,
     )
+
+
+def bookmark_folder_to_dict(folder: BookmarkFolder) -> Dict[str, Any]:
+    """Convert a BookmarkFolder dataclass into a JSON-safe dict."""
+    return {
+        "id": folder.id,
+        "name": folder.name,
+    }
+
+
+def bookmark_folders_to_data(folders: Iterable[BookmarkFolder]) -> List[Dict[str, Any]]:
+    """Serialize BookmarkFolder objects to Python dicts."""
+    return [bookmark_folder_to_dict(f) for f in folders]
 
 
 def user_profile_to_dict(user: UserProfile) -> Dict[str, Any]:
