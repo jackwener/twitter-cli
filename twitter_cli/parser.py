@@ -113,6 +113,85 @@ def _extract_author(user_data, user_legacy):
 # ── Article parsing ──────────────────────────────────────────────────────
 
 
+def _find_article_image_url(value):
+    # type: (Any) -> Optional[str]
+    """Best-effort extraction of the original image URL from article entity data."""
+    if isinstance(value, dict):
+        for key in (
+            "original_url",
+            "originalUrl",
+            "media_url_https",
+            "mediaUrlHttps",
+            "media_url",
+            "mediaUrl",
+            "url",
+            "src",
+            "uri",
+        ):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                lowered = candidate.lower()
+                if (
+                    lowered.startswith("https://pbs.twimg.com/")
+                    or lowered.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
+                    or any(ext in lowered for ext in (".jpg?", ".jpeg?", ".png?", ".gif?", ".webp?"))
+                ):
+                    return candidate.strip()
+        for nested in value.values():
+            found = _find_article_image_url(nested)
+            if found:
+                return found
+        return None
+    if isinstance(value, list):
+        for item in value:
+            found = _find_article_image_url(item)
+            if found:
+                return found
+    return None
+
+
+def _find_article_caption(value):
+    # type: (Any) -> Optional[str]
+    """Best-effort extraction of image caption/alt text from article entity data."""
+    if isinstance(value, dict):
+        for key in ("caption", "alt", "alt_text", "altText", "title", "name"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        for nested in value.values():
+            found = _find_article_caption(nested)
+            if found:
+                return found
+        return None
+    if isinstance(value, list):
+        for item in value:
+            found = _find_article_caption(item)
+            if found:
+                return found
+    return None
+
+
+def _extract_article_images(block, entity_map):
+    # type: (Dict[str, Any], Dict[str, Any]) -> List[str]
+    """Convert atomic Draft.js image entities to Markdown image lines."""
+    parts = []  # type: List[str]
+    for entity_range in block.get("entityRanges", []) or []:
+        if not isinstance(entity_range, dict):
+            continue
+        entity_key = entity_range.get("key")
+        entity = entity_map.get(entity_key)
+        if entity is None and entity_key is not None:
+            entity = entity_map.get(str(entity_key))
+        if not isinstance(entity, dict):
+            continue
+        image_url = _find_article_image_url(entity)
+        if not image_url:
+            continue
+        caption = _find_article_caption(entity) or ""
+        parts.append("![%s](%s)" % (caption, image_url))
+    return parts
+
+
 def _parse_article(tweet_data):
     # type: (Dict[str, Any]) -> Dict[str, Any]
     """Extract Twitter Article data (long-form content) from a tweet.
@@ -130,12 +209,16 @@ def _parse_article(tweet_data):
     if not blocks:
         return {"article_title": title, "article_text": None}
 
+    entity_map = content_state.get("entityMap", {})
+
     # Convert draft.js blocks to Markdown
     parts = []  # type: List[str]
     ordered_counter = 0
     for block in blocks:
         block_type = block.get("type", "unstyled")  # type: str
         if block_type == "atomic":
+            parts.extend(_extract_article_images(block, entity_map))
+            ordered_counter = 0
             continue
         text = block.get("text", "")  # type: str
         if not text:
