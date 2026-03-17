@@ -52,6 +52,13 @@ class Tweet:
     score: Optional[float] = None
     article_title: Optional[str] = None
     article_text: Optional[str] = None
+    is_subscriber_only: bool = False
+
+
+@dataclass
+class BookmarkFolder:
+    id: str
+    name: str
 
 
 @dataclass

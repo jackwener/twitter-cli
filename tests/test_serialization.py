@@ -77,3 +77,11 @@ def test_tweet_roundtrip_preserves_article_fields(tweet_factory) -> None:
 
     assert restored.article_title == "Long-form title"
     assert restored.article_text == "Intro\n\n## Details"
+
+
+def test_tweet_roundtrip_preserves_subscriber_only(tweet_factory) -> None:
+    tweet = tweet_factory("99", is_subscriber_only=True)
+    payload = tweet_to_dict(tweet)
+    assert payload["isSubscriberOnly"] is True
+    restored = tweet_from_dict(payload)
+    assert restored.is_subscriber_only is True

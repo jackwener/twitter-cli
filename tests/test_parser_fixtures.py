@@ -74,6 +74,7 @@ def test_parse_list_timeline_fixture_with_visibility_wrapper(fixture_loader) -> 
     assert cursor == "list-cursor"
     assert tweets[0].author.verified is True
     assert tweets[0].lang == "zh"
+    assert tweets[0].is_subscriber_only is True
 
 
 def test_fetch_user_list_with_fixture(monkeypatch, fixture_loader) -> None:

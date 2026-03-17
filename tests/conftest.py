@@ -38,6 +38,7 @@ def tweet_factory():
             score=overrides.pop("score", 0.0),
             article_title=overrides.pop("article_title", None),
             article_text=overrides.pop("article_text", None),
+            is_subscriber_only=overrides.pop("is_subscriber_only", False),
         )
 
     return _make_tweet

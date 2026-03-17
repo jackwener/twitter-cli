@@ -609,7 +609,7 @@ wheels = [
 
 [[package]]
 name = "twitter-cli"
-version = "0.8.4"
+version = "0.8.5"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },

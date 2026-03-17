@@ -24,8 +24,11 @@ from twitter_cli.graphql import (
 )
 from twitter_cli.parser import (
     _deep_get,
+    _extract_atomic_markdown,
     _extract_cursor,
     _extract_media,
+    _normalize_article_entity_map,
+    _parse_article,
     _parse_int,
     parse_tweet_result,
     parse_user_result,
@@ -414,6 +417,209 @@ class TestPaginationBehavior:
         assert [user.screen_name for user in users] == ["alice"]
 
 
+# ── Article parsing helpers ───────────────────────────────────────────────
+
+class TestNormalizeArticleEntityMap:
+    def test_accepts_dict_entity_map(self):
+        entity_map = {0: {"type": "MARKDOWN"}, "1": {"type": "LINK"}}
+
+        normalized = _normalize_article_entity_map(entity_map)
+
+        assert normalized == {"0": {"type": "MARKDOWN"}, "1": {"type": "LINK"}}
+
+    def test_accepts_list_entity_map(self):
+        entity_map = [
+            {"key": "4", "value": {"type": "MARKDOWN", "data": {"markdown": "```md\nhi\n```"}}},
+            {"key": 5, "value": {"type": "LINK", "data": {"url": "https://example.com"}}},
+        ]
+
+        normalized = _normalize_article_entity_map(entity_map)
+
+        assert normalized == {
+            "4": {"type": "MARKDOWN", "data": {"markdown": "```md\nhi\n```"}},
+            "5": {"type": "LINK", "data": {"url": "https://example.com"}},
+        }
+
+    def test_rejects_unknown_shapes(self):
+        assert _normalize_article_entity_map(None) == {}
+        assert _normalize_article_entity_map("bad") == {}
+
+
+class TestExtractAtomicMarkdown:
+    def test_extracts_markdown_entity(self):
+        block = {"entityRanges": [{"key": 4}]}
+        entity_map = {
+            "4": {"type": "MARKDOWN", "data": {"markdown": "```markdown\nconst answer = 42;\n```"}}
+        }
+
+        assert _extract_atomic_markdown(block, entity_map) == ["```markdown\nconst answer = 42;\n```"]
+
+    def test_ignores_non_markdown_entities(self):
+        block = {"entityRanges": [{"key": 0}, {"key": 1}]}
+        entity_map = {
+            "0": {"type": "MEDIA", "data": {"mediaItems": []}},
+            "1": {"type": "LINK", "data": {"url": "https://example.com"}},
+        }
+
+        assert _extract_atomic_markdown(block, entity_map) == []
+
+    def test_ignores_blank_markdown(self):
+        block = {"entityRanges": [{"key": 4}]}
+        entity_map = {"4": {"type": "MARKDOWN", "data": {"markdown": "   \n"}}}
+
+        assert _extract_atomic_markdown(block, entity_map) == []
+
+
+class TestParseArticle:
+    def test_preserves_atomic_markdown_between_text_blocks(self):
+        result = {
+            "article": {
+                "article_results": {
+                    "result": {
+                        "title": "Article title",
+                        "content_state": {
+                            "blocks": [
+                                {"key": "a", "type": "unstyled", "text": "Intro", "entityRanges": []},
+                                {"key": "b", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 4}]},
+                                {"key": "c", "type": "unstyled", "text": "Outro", "entityRanges": []},
+                            ],
+                            "entityMap": [
+                                {
+                                    "key": "4",
+                                    "value": {
+                                        "type": "MARKDOWN",
+                                        "data": {"markdown": "```markdown\nconst answer = 42;\n```"},
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                }
+            }
+        }
+
+        parsed = _parse_article(result)
+
+        assert parsed == {
+            "article_title": "Article title",
+            "article_text": "Intro\n\n```markdown\nconst answer = 42;\n```\n\nOutro",
+        }
+
+    def test_hooeem_like_payload_keeps_multiple_markdown_blocks(self):
+        result = {
+            "article": {
+                "article_results": {
+                    "result": {
+                        "title": "I want to become a Claude architect (full course).",
+                        "content_state": {
+                            "blocks": [
+                                {"key": "a", "type": "unstyled", "text": "If you have no idea how to get started go to Claude and paste this prompt which will help you with domain 1:", "entityRanges": []},
+                                {"key": "b", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 4}]},
+                                {"key": "c", "type": "unstyled", "text": "What to build to learn: A multi-tool agent with 3-4 MCP tools.", "entityRanges": []},
+                                {"key": "d", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 5}]},
+                                {"key": "e", "type": "unstyled", "text": "Done.", "entityRanges": []},
+                            ],
+                            "entityMap": [
+                                {
+                                    "key": "4",
+                                    "value": {
+                                        "type": "MARKDOWN",
+                                        "data": {"markdown": "```markdown\nYou are an expert instructor teaching Domain 1.\n```"},
+                                    },
+                                },
+                                {
+                                    "key": "5",
+                                    "value": {
+                                        "type": "MARKDOWN",
+                                        "data": {"markdown": "```markdown\nBest for: predictable, structured tasks like code reviews.\n```"},
+                                    },
+                                },
+                            ],
+                        },
+                    }
+                }
+            }
+        }
+
+        parsed = _parse_article(result)
+
+        assert parsed == {
+            "article_title": "I want to become a Claude architect (full course).",
+            "article_text": (
+                "If you have no idea how to get started go to Claude and paste this prompt which will help you with domain 1:\n\n"
+                "```markdown\nYou are an expert instructor teaching Domain 1.\n```\n\n"
+                "What to build to learn: A multi-tool agent with 3-4 MCP tools.\n\n"
+                "```markdown\nBest for: predictable, structured tasks like code reviews.\n```\n\n"
+                "Done."
+            ),
+        }
+
+    def test_preserves_markdown_and_images_in_mixed_atomic_blocks(self):
+        result = {
+            "article": {
+                "article_results": {
+                    "result": {
+                        "title": "Mixed article",
+                        "content_state": {
+                            "blocks": [
+                                {"key": "a", "type": "unstyled", "text": "Intro", "entityRanges": []},
+                                {
+                                    "key": "b",
+                                    "type": "atomic",
+                                    "text": " ",
+                                    "entityRanges": [{"offset": 0, "length": 1, "key": 4}],
+                                },
+                                {
+                                    "key": "c",
+                                    "type": "atomic",
+                                    "text": " ",
+                                    "entityRanges": [{"offset": 0, "length": 1, "key": 5}],
+                                },
+                                {"key": "d", "type": "unstyled", "text": "Outro", "entityRanges": []},
+                            ],
+                            "entityMap": [
+                                {
+                                    "key": "4",
+                                    "value": {
+                                        "type": "MARKDOWN",
+                                        "data": {"markdown": "```markdown\nconst answer = 42;\n```"},
+                                    },
+                                },
+                                {
+                                    "key": "5",
+                                    "value": {
+                                        "type": "MEDIA",
+                                        "data": {"mediaItems": [{"mediaId": "2030504404391194624"}]},
+                                    },
+                                },
+                            ],
+                        },
+                        "media_entities": [
+                            {
+                                "media_id": "2030504404391194624",
+                                "media_info": {
+                                    "original_img_url": "https://pbs.twimg.com/media/example.png"
+                                },
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+
+        parsed = _parse_article(result)
+
+        assert parsed == {
+            "article_title": "Mixed article",
+            "article_text": (
+                "Intro\n\n"
+                "```markdown\nconst answer = 42;\n```\n\n"
+                "![](https://pbs.twimg.com/media/example.png)\n\n"
+                "Outro"
+            ),
+        }
+
+
 # ── TwitterClient._parse_tweet_result ─────────────────────────────────────
 
 class TestParseTweetResult:
@@ -500,6 +706,74 @@ class TestParseTweetResult:
         tweet = parse_tweet_result(wrapped)
         assert tweet is not None
         assert tweet.id == "1234567890"
+        assert tweet.is_subscriber_only is False
+
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    def test_parses_outer_visibility_wrapper_for_retweet(self, mock_ct_headers, mock_session):
+        mock_session.return_value = MagicMock()
+        mock_session.return_value.get = MagicMock(side_effect=Exception("skip"))
+
+        client = TwitterClient.__new__(TwitterClient)
+        client._ct_init_attempted = True
+        client._client_transaction = None
+
+        wrapped_retweet = {
+            "__typename": "TweetWithVisibilityResults",
+            "tweetInterstitial": {
+                "__typename": "TweetInterstitial",
+                "text": {"rtl": False, "text": "Subscribe to see this post"},
+            },
+            "tweet": {
+                "__typename": "Tweet",
+                "rest_id": "outer-retweet",
+                "legacy": {
+                    "full_text": "RT @inner",
+                    "created_at": "Tue Mar 17 00:00:00 +0000 2026",
+                    "lang": "en",
+                    "retweeted_status_result": {
+                        "result": {
+                            "__typename": "Tweet",
+                            "rest_id": "inner-retweeted",
+                            "legacy": {
+                                "full_text": "subscriber post",
+                                "created_at": "Tue Mar 17 00:00:00 +0000 2026",
+                                "lang": "en",
+                            },
+                            "core": {
+                                "user_results": {
+                                    "result": {
+                                        "rest_id": "inner-user",
+                                        "legacy": {
+                                            "screen_name": "inner",
+                                            "name": "Inner User",
+                                        },
+                                    }
+                                }
+                            },
+                        }
+                    },
+                },
+                "core": {
+                    "user_results": {
+                        "result": {
+                            "rest_id": "outer-user",
+                            "legacy": {
+                                "screen_name": "outer",
+                                "name": "Outer User",
+                            },
+                            "core": {"screen_name": "outer"},
+                        }
+                    }
+                },
+            },
+        }
+
+        tweet = parse_tweet_result(wrapped_retweet)
+        assert tweet is not None
+        assert tweet.id == "inner-retweeted"
+        assert tweet.is_retweet is True
+        assert tweet.is_subscriber_only is True
 
     @patch("twitter_cli.client._get_cffi_session")
     @patch("twitter_cli.client._gen_ct_headers", return_value={})
@@ -512,6 +786,219 @@ class TestParseTweetResult:
         client._client_transaction = None
 
         assert parse_tweet_result(self.SAMPLE_TWEET_RESULT, depth=3) is None
+
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    def test_article_atomic_image_block_renders_markdown_image(self, mock_ct_headers, mock_session):
+        mock_session.return_value = MagicMock()
+        mock_session.return_value.get = MagicMock(side_effect=Exception("skip"))
+
+        client = TwitterClient.__new__(TwitterClient)
+        client._ct_init_attempted = True
+        client._client_transaction = None
+
+        result = copy.deepcopy(self.SAMPLE_TWEET_RESULT)
+        result["article"] = {
+            "article_results": {
+                "result": {
+                    "title": "Article title",
+                    "content_state": {
+                        "blocks": [
+                            {"key": "a", "type": "unstyled", "text": "Intro", "entityRanges": []},
+                            {"key": "b", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 0}]},
+                            {"key": "c", "type": "unstyled", "text": "Outro", "entityRanges": []},
+                        ],
+                        "entityMap": {
+                            "0": {
+                                "type": "IMAGE",
+                                "mutability": "IMMUTABLE",
+                                "data": {
+                                    "caption": "A cat",
+                                    "original_url": "https://pbs.twimg.com/media/cat.jpg",
+                                },
+                            }
+                        },
+                    },
+                }
+            }
+        }
+
+        tweet = parse_tweet_result(result)
+        assert tweet is not None
+        assert tweet.article_title == "Article title"
+        assert tweet.article_text == "Intro\n\n![A cat](https://pbs.twimg.com/media/cat.jpg)\n\nOutro"
+
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    def test_article_atomic_image_block_supports_list_entity_map_and_media_entities(self, mock_ct_headers, mock_session):
+        mock_session.return_value = MagicMock()
+        mock_session.return_value.get = MagicMock(side_effect=Exception("skip"))
+
+        client = TwitterClient.__new__(TwitterClient)
+        client._ct_init_attempted = True
+        client._client_transaction = None
+
+        result = copy.deepcopy(self.SAMPLE_TWEET_RESULT)
+        result["article"] = {
+            "article_results": {
+                "result": {
+                    "title": "Article title",
+                    "content_state": {
+                        "blocks": [
+                            {"key": "a", "type": "unstyled", "text": "Intro", "entityRanges": []},
+                            {"key": "b", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 2}]},
+                            {"key": "c", "type": "unstyled", "text": "Outro", "entityRanges": []},
+                        ],
+                        "entityMap": [
+                            {"key": "2", "value": {"type": "MEDIA", "data": {"mediaItems": [{"mediaId": "2030504404391194624"}]}}}
+                        ],
+                    },
+                    "media_entities": [
+                        {
+                            "media_id": "2030504404391194624",
+                            "media_info": {
+                                "original_img_url": "https://pbs.twimg.com/media/example.png"
+                            },
+                        }
+                    ],
+                }
+            }
+        }
+
+        tweet = parse_tweet_result(result)
+        assert tweet is not None
+        assert tweet.article_text == "Intro\n\n![](https://pbs.twimg.com/media/example.png)\n\nOutro"
+
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    def test_article_real_shape_odysseus_like_payload_renders_two_images(self, mock_ct_headers, mock_session):
+        mock_session.return_value = MagicMock()
+        mock_session.return_value.get = MagicMock(side_effect=Exception("skip"))
+
+        client = TwitterClient.__new__(TwitterClient)
+        client._ct_init_attempted = True
+        client._client_transaction = None
+
+        result = copy.deepcopy(self.SAMPLE_TWEET_RESULT)
+        result["article"] = {
+            "article_results": {
+                "result": {
+                    "title": "Harness Engineering Is Cybernetics",
+                    "content_state": {
+                        "blocks": [
+                            {"key": "a", "type": "unstyled", "text": "First paragraph", "entityRanges": []},
+                            {"key": "b", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 2}]},
+                            {"key": "c", "type": "unstyled", "text": "Middle paragraph", "entityRanges": []},
+                            {"key": "d", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 5}]},
+                            {"key": "e", "type": "unstyled", "text": "Last paragraph", "entityRanges": []},
+                        ],
+                        "entityMap": [
+                            {"key": "5", "value": {"type": "MEDIA", "data": {"mediaItems": [{"mediaId": "2030414996266741760"}]}}},
+                            {"key": "2", "value": {"type": "MEDIA", "data": {"mediaItems": [{"mediaId": "2030504404391194624"}]}}},
+                        ],
+                    },
+                    "media_entities": [
+                        {
+                            "media_id": "2030504404391194624",
+                            "media_info": {
+                                "original_img_url": "https://pbs.twimg.com/media/HC3M_2qacAA7mej.png"
+                            },
+                        },
+                        {
+                            "media_id": "2030414996266741760",
+                            "media_info": {
+                                "original_img_url": "https://pbs.twimg.com/media/HC17rnca8AAQgjt.jpg"
+                            },
+                        },
+                    ],
+                }
+            }
+        }
+
+        tweet = parse_tweet_result(result)
+        assert tweet is not None
+        assert tweet.article_text == (
+            "First paragraph\n\n"
+            "![](https://pbs.twimg.com/media/HC3M_2qacAA7mej.png)\n\n"
+            "Middle paragraph\n\n"
+            "![](https://pbs.twimg.com/media/HC17rnca8AAQgjt.jpg)\n\n"
+            "Last paragraph"
+        )
+
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    def test_article_real_shape_elvissun_like_payload_renders_caption_and_three_images(self, mock_ct_headers, mock_session):
+        mock_session.return_value = MagicMock()
+        mock_session.return_value.get = MagicMock(side_effect=Exception("skip"))
+
+        client = TwitterClient.__new__(TwitterClient)
+        client._ct_init_attempted = True
+        client._client_transaction = None
+
+        result = copy.deepcopy(self.SAMPLE_TWEET_RESULT)
+        result["article"] = {
+            "article_results": {
+                "result": {
+                    "title": "OpenClaw + Codex/ClaudeCode Agent Swarm",
+                    "content_state": {
+                        "blocks": [
+                            {"key": "a", "type": "unstyled", "text": "Intro", "entityRanges": []},
+                            {"key": "b", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 0}]},
+                            {"key": "c", "type": "unstyled", "text": "Diagram intro", "entityRanges": []},
+                            {"key": "d", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 1}]},
+                            {"key": "e", "type": "unstyled", "text": "Context comparison", "entityRanges": []},
+                            {"key": "f", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 2}]},
+                        ],
+                        "entityMap": [
+                            {
+                                "key": "0",
+                                "value": {
+                                    "type": "MEDIA",
+                                    "data": {
+                                        "caption": "before Jan: CC/codex only | after Jan: Openclaw orchestrates CC/codex",
+                                        "mediaItems": [{"mediaId": "2025660629109895168"}],
+                                    },
+                                },
+                            },
+                            {"key": "1", "value": {"type": "MEDIA", "data": {"mediaItems": [{"mediaId": "2025790010293669888"}]}}},
+                            {"key": "2", "value": {"type": "MEDIA", "data": {"mediaItems": [{"mediaId": "2025780043406864384"}]}}},
+                        ],
+                    },
+                    "media_entities": [
+                        {
+                            "media_id": "2025660629109895168",
+                            "media_info": {
+                                "original_img_url": "https://pbs.twimg.com/media/HByXnBmW8AANOl9.jpg"
+                            },
+                        },
+                        {
+                            "media_id": "2025790010293669888",
+                            "media_info": {
+                                "original_img_url": "https://pbs.twimg.com/media/HB0NSAEW0AAYPOF.jpg"
+                            },
+                        },
+                        {
+                            "media_id": "2025780043406864384",
+                            "media_info": {
+                                "original_img_url": "https://pbs.twimg.com/media/HB0EN2hXcAAbGi9.png"
+                            },
+                        },
+                    ],
+                }
+            }
+        }
+
+        tweet = parse_tweet_result(result)
+        assert tweet is not None
+        assert tweet.article_text == (
+            "Intro\n\n"
+            "![before Jan: CC/codex only | after Jan: Openclaw orchestrates CC/codex](https://pbs.twimg.com/media/HByXnBmW8AANOl9.jpg)\n\n"
+            "Diagram intro\n\n"
+            "![](https://pbs.twimg.com/media/HB0NSAEW0AAYPOF.jpg)\n\n"
+            "Context comparison\n\n"
+            "![](https://pbs.twimg.com/media/HB0EN2hXcAAbGi9.png)"
+        )
+
 
 
 # ── TwitterAPIError ──────────────────────────────────────────────────────
@@ -688,4 +1175,3 @@ class TestCreateTweetWithMedia:
         result = client.create_tweet("no media")
         assert result == "88"
         assert captured_body["media"]["media_entities"] == []
-

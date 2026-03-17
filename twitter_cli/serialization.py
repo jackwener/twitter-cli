@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Iterable, List, Optional
 
-from .models import Author, Metrics, Tweet, TweetMedia, TwitterList, UserProfile
+from .models import Author, BookmarkFolder, Metrics, Tweet, TweetMedia, TwitterList, UserProfile
 from .timeutil import format_iso8601, format_local_time
 
 
@@ -46,6 +46,7 @@ def tweet_to_dict(tweet: Tweet) -> Dict[str, Any]:
         "retweetedBy": tweet.retweeted_by,
         "lang": tweet.lang,
         "score": tweet.score,
+        "isSubscriberOnly": tweet.is_subscriber_only,
     }
     if tweet.article_title is not None:
         data["articleTitle"] = tweet.article_title
@@ -122,6 +123,7 @@ def tweet_from_dict(data: Dict[str, Any]) -> Tweet:
         score=float(data["score"]) if data.get("score") is not None else None,
         article_title=_optional_str(data.get("articleTitle")),
         article_text=_optional_str(data.get("articleText")),
+        is_subscriber_only=bool(data.get("isSubscriberOnly", False)),
     )
 
 
@@ -173,6 +175,19 @@ def tweets_to_compact_json(tweets: Iterable[Tweet]) -> str:
         ensure_ascii=False,
         indent=2,
     )
+
+
+def bookmark_folder_to_dict(folder: BookmarkFolder) -> Dict[str, Any]:
+    """Convert a BookmarkFolder dataclass into a JSON-safe dict."""
+    return {
+        "id": folder.id,
+        "name": folder.name,
+    }
+
+
+def bookmark_folders_to_data(folders: Iterable[BookmarkFolder]) -> List[Dict[str, Any]]:
+    """Serialize BookmarkFolder objects to Python dicts."""
+    return [bookmark_folder_to_dict(f) for f in folders]
 
 
 def user_profile_to_dict(user: UserProfile) -> Dict[str, Any]:

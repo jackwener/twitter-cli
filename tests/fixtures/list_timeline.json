@@ -15,6 +15,10 @@
                       "tweet_results": {
                         "result": {
                           "__typename": "TweetWithVisibilityResults",
+                          "tweetInterstitial": {
+                            "__typename": "TweetInterstitial",
+                            "text": { "rtl": false, "text": "Subscribe to @lister to see this post" }
+                          },
                           "tweet": {
                             "__typename": "Tweet",
                             "rest_id": "700",
