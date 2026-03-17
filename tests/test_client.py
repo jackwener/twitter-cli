@@ -722,6 +722,47 @@ class TestParseTweetResult:
 
         assert parse_tweet_result(self.SAMPLE_TWEET_RESULT, depth=3) is None
 
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    def test_article_atomic_image_block_renders_markdown_image(self, mock_ct_headers, mock_session):
+        mock_session.return_value = MagicMock()
+        mock_session.return_value.get = MagicMock(side_effect=Exception("skip"))
+
+        client = TwitterClient.__new__(TwitterClient)
+        client._ct_init_attempted = True
+        client._client_transaction = None
+
+        result = copy.deepcopy(self.SAMPLE_TWEET_RESULT)
+        result["article"] = {
+            "article_results": {
+                "result": {
+                    "title": "Article title",
+                    "content_state": {
+                        "blocks": [
+                            {"key": "a", "type": "unstyled", "text": "Intro", "entityRanges": []},
+                            {"key": "b", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 0}]},
+                            {"key": "c", "type": "unstyled", "text": "Outro", "entityRanges": []},
+                        ],
+                        "entityMap": {
+                            "0": {
+                                "type": "IMAGE",
+                                "mutability": "IMMUTABLE",
+                                "data": {
+                                    "caption": "A cat",
+                                    "original_url": "https://pbs.twimg.com/media/cat.jpg",
+                                },
+                            }
+                        },
+                    },
+                }
+            }
+        }
+
+        tweet = parse_tweet_result(result)
+        assert tweet is not None
+        assert tweet.article_title == "Article title"
+        assert tweet.article_text == "Intro\n\n![A cat](https://pbs.twimg.com/media/cat.jpg)\n\nOutro"
+
 
 
 # ── TwitterAPIError ──────────────────────────────────────────────────────

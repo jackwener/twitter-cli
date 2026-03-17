@@ -113,6 +113,45 @@ def _extract_author(user_data, user_legacy):
 # ── Article parsing ──────────────────────────────────────────────────────
 
 
+def _find_article_image_url(value):
+    # type: (Any) -> Optional[str]
+    """Best-effort extraction of the original image URL from article entity data."""
+    if isinstance(value, dict):
+        for key in (
+            "original_img_url",
+            "originalImgUrl",
+            "original_url",
+            "originalUrl",
+            "media_url_https",
+            "mediaUrlHttps",
+            "media_url",
+            "mediaUrl",
+            "url",
+            "src",
+            "uri",
+        ):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                lowered = candidate.lower()
+                if (
+                    lowered.startswith("https://pbs.twimg.com/")
+                    or lowered.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
+                    or any(ext in lowered for ext in (".jpg?", ".jpeg?", ".png?", ".gif?", ".webp?"))
+                ):
+                    return candidate.strip()
+        for nested in value.values():
+            found = _find_article_image_url(nested)
+            if found:
+                return found
+        return None
+    if isinstance(value, list):
+        for item in value:
+            found = _find_article_image_url(item)
+            if found:
+                return found
+    return None
+
+
 def _normalize_article_entity_map(entity_map):
     # type: (Any) -> Dict[str, Any]
     """Normalize Draft.js entityMap that may arrive as dict or [{key, value}, ...]."""
@@ -131,6 +170,30 @@ def _normalize_article_entity_map(entity_map):
         return normalized
     return {}
 
+
+def _extract_article_media_url_map(article_results):
+    # type: (Dict[str, Any]) -> Dict[str, str]
+    """Map article media ids/keys to original image URLs when entities reference IDs only."""
+    media_url_map = {}  # type: Dict[str, str]
+    media_candidates = []  # type: List[Any]
+
+    cover_media = article_results.get("cover_media")
+    if cover_media:
+        media_candidates.append(cover_media)
+    media_candidates.extend(article_results.get("media_entities") or [])
+
+    for media in media_candidates:
+        if not isinstance(media, dict):
+            continue
+        media_info = media.get("media_info") or {}
+        image_url = _find_article_image_url(media_info) or _find_article_image_url(media)
+        if not image_url:
+            continue
+        for key in ("media_id", "media_key", "id"):
+            candidate = media.get(key)
+            if isinstance(candidate, str) and candidate:
+                media_url_map[candidate] = image_url
+    return media_url_map
 
 
 def _extract_atomic_markdown(block, entity_map):
@@ -152,7 +215,51 @@ def _extract_atomic_markdown(block, entity_map):
     return parts
 
 
+def _find_article_caption(value):
+    # type: (Any) -> Optional[str]
+    """Best-effort extraction of image caption/alt text from article entity data."""
+    if isinstance(value, dict):
+        for key in ("caption", "alt", "alt_text", "altText", "title", "name"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        for nested in value.values():
+            found = _find_article_caption(nested)
+            if found:
+                return found
+        return None
+    if isinstance(value, list):
+        for item in value:
+            found = _find_article_caption(item)
+            if found:
+                return found
+    return None
 
+
+def _extract_article_images(block, entity_map, media_url_map):
+    # type: (Dict[str, Any], Dict[str, Any], Dict[str, str]) -> List[str]
+    """Convert atomic Draft.js image entities to Markdown image lines."""
+    parts = []  # type: List[str]
+    for entity_range in block.get("entityRanges", []) or []:
+        if not isinstance(entity_range, dict):
+            continue
+        entity_key = entity_range.get("key")
+        entity = entity_map.get(str(entity_key)) if entity_key is not None else None
+        if not isinstance(entity, dict):
+            continue
+        image_url = _find_article_image_url(entity)
+        if not image_url:
+            media_items = _deep_get(entity, "data", "mediaItems") or []
+            for media_item in media_items:
+                media_id = media_item.get("mediaId") if isinstance(media_item, dict) else None
+                if isinstance(media_id, str) and media_id in media_url_map:
+                    image_url = media_url_map[media_id]
+                    break
+        if not image_url:
+            continue
+        caption = _find_article_caption(entity) or ""
+        parts.append("![%s](%s)" % (caption, image_url))
+    return parts
 def _parse_article(tweet_data):
     # type: (Dict[str, Any]) -> Dict[str, Any]
     """Extract Twitter Article data (long-form content) from a tweet.
@@ -171,6 +278,7 @@ def _parse_article(tweet_data):
         return {"article_title": title, "article_text": None}
 
     entity_map = _normalize_article_entity_map(content_state.get("entityMap", {}))
+    media_url_map = _extract_article_media_url_map(article_results)
 
     # Convert draft.js blocks to Markdown
     parts = []  # type: List[str]
@@ -179,6 +287,7 @@ def _parse_article(tweet_data):
         block_type = block.get("type", "unstyled")  # type: str
         if block_type == "atomic":
             parts.extend(_extract_atomic_markdown(block, entity_map))
+            parts.extend(_extract_article_images(block, entity_map, media_url_map))
             ordered_counter = 0
             continue
         text = block.get("text", "")  # type: str
