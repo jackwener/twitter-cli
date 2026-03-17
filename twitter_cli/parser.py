@@ -113,6 +113,46 @@ def _extract_author(user_data, user_legacy):
 # ── Article parsing ──────────────────────────────────────────────────────
 
 
+def _normalize_article_entity_map(entity_map):
+    # type: (Any) -> Dict[str, Any]
+    """Normalize Draft.js entityMap that may arrive as dict or [{key, value}, ...]."""
+    if isinstance(entity_map, dict):
+        return {str(key): value for key, value in entity_map.items()}
+    if isinstance(entity_map, list):
+        normalized = {}  # type: Dict[str, Any]
+        for item in entity_map:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("key")
+            value = item.get("value")
+            if key is None or value is None:
+                continue
+            normalized[str(key)] = value
+        return normalized
+    return {}
+
+
+
+def _extract_atomic_markdown(block, entity_map):
+    # type: (Dict[str, Any], Dict[str, Any]) -> List[str]
+    """Extract embedded markdown/code payloads from atomic Draft.js entities."""
+    parts = []  # type: List[str]
+    for entity_range in block.get("entityRanges", []) or []:
+        if not isinstance(entity_range, dict):
+            continue
+        entity_key = entity_range.get("key")
+        entity = entity_map.get(str(entity_key)) if entity_key is not None else None
+        if not isinstance(entity, dict):
+            continue
+        if str(entity.get("type") or "").upper() != "MARKDOWN":
+            continue
+        markdown = _deep_get(entity, "data", "markdown")
+        if isinstance(markdown, str) and markdown.strip():
+            parts.append(markdown.strip())
+    return parts
+
+
+
 def _parse_article(tweet_data):
     # type: (Dict[str, Any]) -> Dict[str, Any]
     """Extract Twitter Article data (long-form content) from a tweet.
@@ -130,12 +170,16 @@ def _parse_article(tweet_data):
     if not blocks:
         return {"article_title": title, "article_text": None}
 
+    entity_map = _normalize_article_entity_map(content_state.get("entityMap", {}))
+
     # Convert draft.js blocks to Markdown
     parts = []  # type: List[str]
     ordered_counter = 0
     for block in blocks:
         block_type = block.get("type", "unstyled")  # type: str
         if block_type == "atomic":
+            parts.extend(_extract_atomic_markdown(block, entity_map))
+            ordered_counter = 0
             continue
         text = block.get("text", "")  # type: str
         if not text:

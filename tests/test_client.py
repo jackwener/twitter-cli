@@ -513,6 +513,105 @@ class TestParseTweetResult:
 
         assert parse_tweet_result(self.SAMPLE_TWEET_RESULT, depth=3) is None
 
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    def test_article_atomic_markdown_entity_preserves_fenced_code_block(self, mock_ct_headers, mock_session):
+        mock_session.return_value = MagicMock()
+        mock_session.return_value.get = MagicMock(side_effect=Exception("skip"))
+
+        client = TwitterClient.__new__(TwitterClient)
+        client._ct_init_attempted = True
+        client._client_transaction = None
+
+        result = copy.deepcopy(self.SAMPLE_TWEET_RESULT)
+        result["article"] = {
+            "article_results": {
+                "result": {
+                    "title": "Article title",
+                    "content_state": {
+                        "blocks": [
+                            {"key": "a", "type": "unstyled", "text": "Intro", "entityRanges": []},
+                            {"key": "b", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 4}]},
+                            {"key": "c", "type": "unstyled", "text": "Outro", "entityRanges": []},
+                        ],
+                        "entityMap": [
+                            {
+                                "key": "4",
+                                "value": {
+                                    "type": "MARKDOWN",
+                                    "data": {
+                                        "markdown": "```markdown\nconst answer = 42;\n```"
+                                    },
+                                },
+                            }
+                        ],
+                    },
+                }
+            }
+        }
+
+        tweet = parse_tweet_result(result)
+        assert tweet is not None
+        assert tweet.article_text == "Intro\n\n```markdown\nconst answer = 42;\n```\n\nOutro"
+
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    def test_article_real_shape_hooeem_like_payload_keeps_embedded_markdown_blocks(self, mock_ct_headers, mock_session):
+        mock_session.return_value = MagicMock()
+        mock_session.return_value.get = MagicMock(side_effect=Exception("skip"))
+
+        client = TwitterClient.__new__(TwitterClient)
+        client._ct_init_attempted = True
+        client._client_transaction = None
+
+        result = copy.deepcopy(self.SAMPLE_TWEET_RESULT)
+        result["article"] = {
+            "article_results": {
+                "result": {
+                    "title": "I want to become a Claude architect (full course).",
+                    "content_state": {
+                        "blocks": [
+                            {"key": "a", "type": "unstyled", "text": "If you have no idea how to get started go to Claude and paste this prompt which will help you with domain 1:", "entityRanges": []},
+                            {"key": "b", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 4}]},
+                            {"key": "c", "type": "unstyled", "text": "What to build to learn: A multi-tool agent with 3-4 MCP tools.", "entityRanges": []},
+                            {"key": "d", "type": "atomic", "text": " ", "entityRanges": [{"offset": 0, "length": 1, "key": 5}]},
+                            {"key": "e", "type": "unstyled", "text": "Done.", "entityRanges": []},
+                        ],
+                        "entityMap": [
+                            {
+                                "key": "4",
+                                "value": {
+                                    "type": "MARKDOWN",
+                                    "data": {
+                                        "markdown": "```markdown\nYou are an expert instructor teaching Domain 1.\n```"
+                                    },
+                                },
+                            },
+                            {
+                                "key": "5",
+                                "value": {
+                                    "type": "MARKDOWN",
+                                    "data": {
+                                        "markdown": "```markdown\nBest for: predictable, structured tasks like code reviews.\n```"
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                }
+            }
+        }
+
+        tweet = parse_tweet_result(result)
+        assert tweet is not None
+        assert tweet.article_text == (
+            "If you have no idea how to get started go to Claude and paste this prompt which will help you with domain 1:\n\n"
+            "```markdown\nYou are an expert instructor teaching Domain 1.\n```\n\n"
+            "What to build to learn: A multi-tool agent with 3-4 MCP tools.\n\n"
+            "```markdown\nBest for: predictable, structured tasks like code reviews.\n```\n\n"
+            "Done."
+        )
+
 
 # ── TwitterAPIError ──────────────────────────────────────────────────────
 
