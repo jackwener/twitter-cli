@@ -229,6 +229,40 @@ def test_cli_article_markdown_overrides_auto_structured_output(monkeypatch) -> N
     assert result.output == article_to_markdown(article)
 
 
+def test_cli_article_json_output_file_uses_structured_format(monkeypatch, tmp_path) -> None:
+    article = Tweet(
+        id="12345",
+        text="https://t.co/article",
+        author=Author(id="u1", name="Alice", screen_name="alice"),
+        metrics=Metrics(likes=1, retweets=2, replies=3, views=4, bookmarks=5),
+        created_at="2026-03-11",
+        article_title="Title",
+        article_text="Hello\n\n## Section",
+    )
+
+    class FakeClient:
+        def fetch_article(self, tweet_id: str) -> Tweet:
+            assert tweet_id == "12345"
+            return article
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr("twitter_cli.cli.load_config", lambda: {})
+    output_path = tmp_path / "article.json"
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["article", "12345", "--json", "--output", str(output_path)],
+    )
+
+    assert result.exit_code == 0
+    stdout_payload = yaml.safe_load(result.output)
+    assert stdout_payload["ok"] is True
+    saved_payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert saved_payload["id"] == "12345"
+    assert saved_payload["articleTitle"] == "Title"
+
+
 def test_cli_article_rejects_compact_mode() -> None:
     runner = CliRunner()
 
@@ -572,6 +606,26 @@ def test_cli_post_json_output(monkeypatch) -> None:
     assert payload["ok"] is True
     assert payload["data"]["action"] == "post"
     assert payload["data"]["id"] == "999"
+
+
+def test_cli_post_reply_to_accepts_status_url(monkeypatch) -> None:
+    calls = []
+
+    class FakeClient:
+        def create_tweet(self, text: str, reply_to_id=None, media_ids=None) -> str:
+            calls.append({"text": text, "reply_to_id": reply_to_id})
+            return "999"
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["post", "hello", "--reply-to", "https://x.com/alice/status/12345?s=20"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [{"text": "hello", "reply_to_id": "12345"}]
 
 
 def test_cli_post_with_images_passes_media_ids(monkeypatch, tmp_path) -> None:
