@@ -1075,6 +1075,8 @@ class TwitterClient:
             )
             home_page_response = bs4.BeautifulSoup(home_page.content, "html.parser")
             ondemand_url = get_ondemand_file_url(response=home_page_response)
+            if not ondemand_url:
+                raise Exception("Failed to extract ondemand file URL from homepage")
             ondemand_file = cffi_session.get(
                 ondemand_url, headers=ct_headers, timeout=10,
             )

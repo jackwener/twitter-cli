@@ -1175,3 +1175,74 @@ class TestCreateTweetWithMedia:
         result = client.create_tweet("no media")
         assert result == "88"
         assert captured_body["media"]["media_entities"] == []
+
+
+# ── _init_client_transaction ─────────────────────────────────────────────
+
+class TestInitClientTransaction:
+    """Tests for ClientTransaction initialization with various edge cases."""
+
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client.get_ondemand_file_url")
+    @patch("twitter_cli.client.bs4.BeautifulSoup")
+    def test_handles_none_ondemand_url(self, mock_bs, mock_get_url, mock_session):
+        """When get_ondemand_file_url returns None, should log warning without crashing."""
+        from twitter_cli.client import _gen_ct_headers
+
+        sess = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = b"<html></html>"
+        sess.get.return_value = mock_response
+        mock_session.return_value = sess
+
+        # Simulate get_ondemand_file_url returning None (page structure changed)
+        mock_get_url.return_value = None
+
+        mock_bs.return_value = MagicMock()
+
+        client = TwitterClient.__new__(TwitterClient)
+        client._client_transaction = None
+        client._ct_init_attempted = False
+
+        # Should not raise, just log warning
+        client._ensure_client_transaction()
+
+        # Verify get_ondemand_file_url was called
+        mock_get_url.assert_called_once()
+        # Verify second HTTP request was NOT made (since URL was None)
+        assert sess.get.call_count == 1  # Only the initial x.com request
+
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client.get_ondemand_file_url")
+    @patch("twitter_cli.client.ClientTransaction")
+    @patch("twitter_cli.client.bs4.BeautifulSoup")
+    def test_successful_init_when_url_valid(
+        self, mock_bs, mock_ct, mock_get_url, mock_session
+    ):
+        """Normal flow when ondemand URL is extracted successfully."""
+        sess = MagicMock()
+        home_response = MagicMock()
+        ondemand_response = MagicMock()
+        ondemand_response.text = "ondemand js content"
+        sess.get.side_effect = [home_response, ondemand_response]
+        mock_session.return_value = sess
+
+        mock_get_url.return_value = "https://abs.twimg.com/ondemand.js"
+
+        mock_soup = MagicMock()
+        mock_bs.return_value = mock_soup
+
+        mock_ct_instance = MagicMock()
+        mock_ct.return_value = mock_ct_instance
+
+        client = TwitterClient.__new__(TwitterClient)
+        client._client_transaction = None
+        client._ct_init_attempted = False
+
+        client._ensure_client_transaction()
+
+        # Verify both HTTP requests were made
+        assert sess.get.call_count == 2
+        # Verify ClientTransaction was initialized
+        mock_ct.assert_called_once()
+        assert client._client_transaction == mock_ct_instance
