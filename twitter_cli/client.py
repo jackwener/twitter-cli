@@ -341,6 +341,7 @@ class TwitterClient:
             count: Max number of tweets to return.
             product: Search tab — "Top", "Latest", "People", "Photos", "Videos".
         """
+        # Twitter migrated SearchTimeline from GET to POST — use _graphql_post.
         return self._fetch_timeline(
             "SearchTimeline",
             count,
@@ -353,6 +354,7 @@ class TwitterClient:
                 "product": product,
             },
             override_base_variables=True,
+            use_post=True,
         )
 
     def fetch_tweet_detail(self, tweet_id, count=20):
@@ -730,14 +732,16 @@ class TwitterClient:
 
     # ── Internal: timeline / user list fetchers ──────────────────────
 
-    def _fetch_timeline(self, operation_name, count, get_instructions, extra_variables=None, override_base_variables=False, field_toggles=None):
-        # type: (str, int, Callable[[Any], Any], Optional[Dict[str, Any]], bool, Optional[Dict[str, Any]]) -> List[Tweet]
+    def _fetch_timeline(self, operation_name, count, get_instructions, extra_variables=None, override_base_variables=False, field_toggles=None, use_post=False):
+        # type: (str, int, Callable[[Any], Any], Optional[Dict[str, Any]], bool, Optional[Dict[str, Any]], bool) -> List[Tweet]
         """Generic timeline fetcher with pagination and deduplication.
 
         Args:
             override_base_variables: If True, use only extra_variables + count/cursor
                 instead of the default timeline base variables. Needed for
                 endpoints like SearchTimeline that reject unknown variables.
+            use_post: If True, send request via POST instead of GET. Required for
+                endpoints like SearchTimeline that Twitter migrated to POST.
         """
         if count <= 0:
             return []
@@ -768,7 +772,10 @@ class TwitterClient:
             if cursor:
                 variables["cursor"] = cursor
 
-            data = self._graphql_get(operation_name, variables, FEATURES, field_toggles=field_toggles)
+            if use_post:
+                data = self._graphql_post(operation_name, variables, FEATURES)
+            else:
+                data = self._graphql_get(operation_name, variables, FEATURES, field_toggles=field_toggles)
             new_tweets, next_cursor = parse_timeline_response(data, get_instructions)
 
             for tweet in new_tweets:
@@ -1075,6 +1082,8 @@ class TwitterClient:
             )
             home_page_response = bs4.BeautifulSoup(home_page.content, "html.parser")
             ondemand_url = get_ondemand_file_url(response=home_page_response)
+            if not ondemand_url:
+                raise ValueError("Failed to extract ondemand file URL from homepage")
             ondemand_file = cffi_session.get(
                 ondemand_url, headers=ct_headers, timeout=10,
             )

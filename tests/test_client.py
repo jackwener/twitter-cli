@@ -19,6 +19,7 @@ from twitter_cli.client import (
 from twitter_cli.exceptions import TwitterAPIError
 from twitter_cli.graphql import (
     FEATURES,
+    FALLBACK_QUERY_IDS,
     _build_graphql_url,
     _update_features_from_html,
 )
@@ -203,6 +204,10 @@ class TestBuildGraphqlUrl:
             FEATURES,
         )
         assert len(url) < 8000, f"URL too long: {len(url)} chars"
+
+    def test_searchtimeline_fallback_query_id_regression(self):
+        """Keep SearchTimeline fallback aligned with the live operation after issue #39."""
+        assert FALLBACK_QUERY_IDS["SearchTimeline"] == "rkp6b4vtR9u7v3naGoOzUQ"
 
 
 # ── _best_chrome_target ──────────────────────────────────────────────────
@@ -1175,3 +1180,68 @@ class TestCreateTweetWithMedia:
         result = client.create_tweet("no media")
         assert result == "88"
         assert captured_body["media"]["media_entities"] == []
+
+
+# ── fetch_search uses POST ────────────────────────────────────────────────
+
+class TestFetchSearchUsesPost:
+    """Verify that fetch_search routes through _graphql_post (not GET)."""
+
+    def _make_client(self):
+        client = TwitterClient.__new__(TwitterClient)
+        client._auth_token = "tok"
+        client._ct0 = "ct0"
+        client._cookie_string = None
+        client._request_delay = 0
+        client._max_retries = 0
+        client._retry_base_delay = 0
+        client._max_count = 200
+        client._client_transaction = None
+        client._ct_init_attempted = True
+        return client
+
+    def test_fetch_search_calls_graphql_post(self):
+        """fetch_search must use POST, not GET, for SearchTimeline."""
+        client = self._make_client()
+
+        post_calls = []
+        get_calls = []
+
+        def mock_post(operation_name, variables, features=None):
+            post_calls.append((operation_name, variables))
+            return {"data": {"search_by_raw_query": {"search_timeline": {"timeline": {"instructions": []}}}}}
+
+        def mock_get(operation_name, variables, features, field_toggles=None):  # pragma: no cover
+            get_calls.append(operation_name)
+            return {}
+
+        client._graphql_post = mock_post
+        client._graphql_get = mock_get
+
+        results = client.fetch_search("AI agent", count=5)
+
+        assert len(get_calls) == 0, "fetch_search must NOT call _graphql_get"
+        assert len(post_calls) == 1
+        op_name, variables = post_calls[0]
+        assert op_name == "SearchTimeline"
+        assert variables["rawQuery"] == "AI agent"
+        assert variables["product"] == "Top"
+        assert results == []
+
+    def test_fetch_search_passes_product_param(self):
+        """fetch_search forwards the product parameter correctly."""
+        client = self._make_client()
+
+        captured = {}
+
+        def mock_post(operation_name, variables, features=None):
+            captured.update(variables)
+            return {"data": {"search_by_raw_query": {"search_timeline": {"timeline": {"instructions": []}}}}}
+
+        client._graphql_post = mock_post
+        client._graphql_get = lambda *a, **kw: {}  # pragma: no cover
+
+        client.fetch_search("python", count=3, product="Latest")
+
+        assert captured.get("product") == "Latest"
+        assert captured.get("querySource") == "typed_query"
