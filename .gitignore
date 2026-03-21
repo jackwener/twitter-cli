@@ -5,6 +5,7 @@ dist/
 build/
 .venv/
 .env
+.DS_Store
 *.json
 !tests/fixtures/*.json
 !config.yaml

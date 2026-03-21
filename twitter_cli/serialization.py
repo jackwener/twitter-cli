@@ -1,11 +1,11 @@
-"""Serialization helpers for Tweet and UserProfile models."""
+"""Serialization helpers for Tweet, TwitterList, and UserProfile models."""
 
 from __future__ import annotations
 
 import json
 from typing import Any, Dict, Iterable, List, Optional
 
-from .models import Author, BookmarkFolder, Metrics, Tweet, TweetMedia, UserProfile
+from .models import Author, BookmarkFolder, Metrics, Tweet, TweetMedia, TwitterList, UserProfile
 from .timeutil import format_iso8601, format_local_time
 
 
@@ -210,6 +210,21 @@ def user_profile_to_dict(user: UserProfile) -> Dict[str, Any]:
     }
 
 
+def twitter_list_to_dict(twitter_list: TwitterList) -> Dict[str, Any]:
+    """Convert a TwitterList dataclass into a JSON-safe dict."""
+    return {
+        "id": twitter_list.id,
+        "name": twitter_list.name,
+        "ownerScreenName": twitter_list.owner_screen_name,
+        "description": twitter_list.description,
+        "followers": twitter_list.follower_count,
+        "members": twitter_list.member_count,
+        "private": twitter_list.private,
+        "createdAt": twitter_list.created_at,
+        "createdAtISO": format_iso8601(twitter_list.created_at),
+    }
+
+
 def users_to_json(users: Iterable[UserProfile]) -> str:
     """Serialize UserProfile objects to pretty JSON."""
     return json.dumps(
@@ -222,6 +237,11 @@ def users_to_json(users: Iterable[UserProfile]) -> str:
 def users_to_data(users: Iterable[UserProfile]) -> List[Dict[str, Any]]:
     """Serialize UserProfile objects to Python dicts."""
     return [user_profile_to_dict(user) for user in users]
+
+
+def twitter_lists_to_data(twitter_lists: Iterable[TwitterList]) -> List[Dict[str, Any]]:
+    """Serialize TwitterList objects to Python dicts."""
+    return [twitter_list_to_dict(twitter_list) for twitter_list in twitter_lists]
 
 
 def _optional_int(value: Any) -> Optional[int]:

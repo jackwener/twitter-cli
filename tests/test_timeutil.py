@@ -6,6 +6,7 @@ from twitter_cli.timeutil import format_iso8601, format_local_time, format_relat
 
 
 SAMPLE_TIMESTAMP = "Sat Mar 08 12:00:00 +0000 2026"
+ISO_TIMESTAMP = "2026-03-08T12:00:00.000Z"
 
 
 # ── format_local_time ────────────────────────────────────────────────────
@@ -24,6 +25,12 @@ def test_format_local_time_empty() -> None:
 
 def test_format_local_time_invalid() -> None:
     assert format_local_time("not a date") == "not a date"
+
+
+def test_format_local_time_iso8601() -> None:
+    result = format_local_time(ISO_TIMESTAMP)
+    assert result.startswith("2026-03-")
+    assert ":" in result
 
 
 # ── format_relative_time ─────────────────────────────────────────────────
@@ -45,6 +52,10 @@ def test_format_relative_time_invalid() -> None:
     assert format_relative_time("garbage") == "garbage"
 
 
+def test_format_relative_time_iso_future() -> None:
+    assert format_relative_time("2999-01-01T00:00:00Z") == "just now"
+
+
 # ── format_iso8601 ───────────────────────────────────────────────────────
 
 
@@ -60,6 +71,12 @@ def test_format_iso8601_empty() -> None:
 
 def test_format_iso8601_invalid() -> None:
     assert format_iso8601("not a date") == "not a date"
+
+
+def test_format_iso8601_keeps_iso_timestamp_parseable() -> None:
+    result = format_iso8601(ISO_TIMESTAMP)
+    assert result.startswith("2026-03-08T12:00:00")
+    assert "+00:00" in result
 
 
 def test_format_iso8601_roundtrip() -> None:

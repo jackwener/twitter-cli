@@ -45,6 +45,7 @@ A terminal-first CLI for Twitter/X: read timelines, bookmarks, and user profiles
 
 **Auth & Anti-Detection:**
 - Cookie auth: use browser cookies or environment variables
+- Official API v2 auth: opt into stable `--auth-mode api` with bearer/user access tokens
 - Full cookie forwarding: extracts ALL browser cookies for richer browser context
 - TLS fingerprint impersonation: `curl_cffi` with dynamic Chrome version matching
 - `x-client-transaction-id` header generation
@@ -82,7 +83,7 @@ uv sync
 ### Quick Start
 
 ```bash
-# Fetch home timeline (For You)
+# Fetch home timeline
 twitter feed
 
 # Fetch Following timeline
@@ -90,6 +91,9 @@ twitter feed -t following
 
 # Enable ranking filter explicitly
 twitter feed --filter
+
+# Use official API auth mode with full-archive search
+twitter --auth-mode api search "AI agent" --scope all --json
 ```
 
 ### Usage
@@ -110,6 +114,7 @@ twitter bookmarks --max 30 --yaml
 # Search
 twitter search "Claude Code"
 twitter search "AI agent" -t Latest --max 50
+twitter search "AI agent" --scope all               # Official API full-archive search
 twitter search "AI agent" --full-text
 twitter search "机器学习" --yaml
 twitter search "python" --from elonmusk --lang en --since 2026-01-01
@@ -120,11 +125,13 @@ twitter search "trending" --filter              # Apply ranking filter
 # Tweet detail (view tweet + replies)
 twitter tweet 1234567890
 twitter tweet 1234567890 --full-text
+twitter tweet 1234567890 --reply-scope all          # Prefer full-archive reply lookup
 twitter tweet https://x.com/user/status/1234567890
 
 # Open tweet by index from last list output
 twitter show 2                         # Open tweet #2 from last feed/search
 twitter show 2 --full-text             # Full text in reply table
+twitter show 2 --reply-scope all       # Prefer full-archive reply lookup
 twitter show 2 --json                  # Structured output
 
 # Twitter Article
@@ -136,15 +143,19 @@ twitter article 1234567890 --output article.md
 # List timeline
 twitter list 1539453138322673664
 twitter list 1539453138322673664 --full-text
+twitter list-info 1539453138322673664
 
 # User
 twitter user elonmusk
 twitter user-posts elonmusk --max 20
 twitter user-posts elonmusk --full-text
 twitter user-posts elonmusk -o tweets.json
+twitter mentions elonmusk --max 20
 twitter likes elonmusk --max 30          # ⚠️ own likes only (private since Jun 2024)
 twitter likes elonmusk --full-text
 twitter likes elonmusk -o likes.json
+twitter owned-lists elonmusk --max 20
+twitter followed-lists elonmusk --max 20
 twitter followers elonmusk --max 50
 twitter following elonmusk --max 50
 
@@ -152,9 +163,13 @@ twitter following elonmusk --max 50
 twitter post "Hello from twitter-cli!"
 twitter post "Hello!" --image photo.jpg            # Post with image
 twitter post "Gallery" -i a.png -i b.jpg -i c.webp  # Up to 4 images
+twitter post "Watch this" --video clip.mp4          # API mode: post with video
+twitter post "Watch this" --file clip.mp4 --alt-text "Demo clip"
 twitter post "reply text" --reply-to 1234567890
 twitter reply 1234567890 "Nice!" -i screenshot.png  # Reply with image
+twitter reply 1234567890 "Nice!" --video clip.mp4   # API mode: reply with video
 twitter quote 1234567890 "Look" -i chart.png        # Quote with image
+twitter quote 1234567890 "Look" --video clip.mp4    # API mode: quote with video
 twitter post "Hello from twitter-cli!" --json
 twitter delete 1234567890
 twitter like 1234567890
@@ -169,12 +184,39 @@ twitter follow elonmusk --json
 
 ### Authentication
 
-twitter-cli uses this auth priority:
+twitter-cli supports two auth backends:
 
-1. **Environment variables**: `TWITTER_AUTH_TOKEN` + `TWITTER_CT0`
-2. **Browser cookies** (recommended): auto-extract from Arc/Chrome/Edge/Firefox/Brave
+1. **Cookie auth**: `TWITTER_AUTH_TOKEN` + `TWITTER_CT0`, or browser cookies auto-extracted from Arc/Chrome/Edge/Firefox/Brave
+2. **Official API v2 auth**: `TWITTER_API_BEARER_TOKEN` for read-only official endpoints, or `TWITTER_API_ACCESS_TOKEN` for OAuth 2.0 user-context commands
 
 Browser extraction is recommended — it forwards ALL Twitter cookies (not just `auth_token` + `ct0`) and aligns request headers with your local runtime, which is closer to normal browser traffic than minimal cookie auth.
+
+Choose the backend with `--auth-mode auto|cookie|api` or `TWITTER_AUTH_MODE=auto|cookie|api`.
+
+**Official API mode setup:**
+
+```bash
+# Read-only official API mode
+export TWITTER_AUTH_MODE=api
+export TWITTER_API_BEARER_TOKEN=...
+
+# OAuth 2.0 user-context mode (required for whoami/status/post/like/retweet/follow/bookmarks)
+export TWITTER_API_ACCESS_TOKEN=...
+# Optional: skip /users/me lookup for write actions
+export TWITTER_API_USER_ID=...
+```
+
+**twitter-cli API mode currently supports:**
+- Read: `feed`, `bookmarks`, `tweet`, `show`, `article`, `list`, `list-info`, `likes`, `mentions`, `search`, `user`, `user-posts`, `owned-lists`, `followed-lists`, `followers`, `following`, `status`, `whoami`
+- Write: `post`, `reply`, `quote`, `delete`, `like`, `unlike`, `retweet`, `unretweet`, `follow`, `unfollow`, `bookmark`, `unbookmark`
+- Media: image and video upload in `post` / `reply` / `quote`
+
+**API mode notes:**
+- `feed` and `feed -t following` both use the official reverse-chronological home timeline endpoint exposed by the authenticated user's API access.
+- `search --scope all` uses the official full-archive search endpoint when your API access permits it.
+- `tweet` / `show` support `--reply-scope auto|recent|all`; `auto` prefers full-archive search for older posts and falls back when needed.
+- `--video` / `--file` and `--alt-text` are currently intended for official API mode.
+- `article` uses the official tweet lookup response and renders article metadata/content when the API returns article fields for that post.
 
 **Chrome multi-profile**: All Chrome profiles are scanned automatically. To specify a profile:
 
@@ -396,6 +438,7 @@ git clone git@github.com:jackwener/twitter-cli.git .agents/skills/twitter-cli
 
 **认证与反风控:**
 - Cookie 认证：支持环境变量和浏览器自动提取
+- 官方 API v2 认证：支持通过 `--auth-mode api` 切到稳定的官方令牌模式
 - 完整 Cookie 转发：提取浏览器中所有 Twitter Cookie，保留更多浏览器上下文
 - TLS 指纹伪装：`curl_cffi` 动态匹配 Chrome 版本
 - `x-client-transaction-id` 请求头生成
@@ -428,6 +471,9 @@ twitter feed -t following
 twitter feed --filter
 twitter feed --full-text
 
+# 官方 API 模式
+twitter --auth-mode api search "AI agent" --scope all --json
+
 # 收藏
 twitter bookmarks
 twitter bookmarks --full-text
@@ -435,6 +481,7 @@ twitter bookmarks --full-text
 # 搜索
 twitter search "Claude Code"
 twitter search "AI agent" -t Latest --max 50
+twitter search "AI agent" --scope all              # 官方 API 全量历史搜索
 twitter search "AI agent" --full-text
 twitter search "topic" -o results.json         # 保存到文件
 twitter search "trending" --filter              # 启用排序筛选
@@ -442,10 +489,12 @@ twitter search "trending" --filter              # 启用排序筛选
 # 推文详情
 twitter tweet 1234567890
 twitter tweet 1234567890 --full-text
+twitter tweet 1234567890 --reply-scope all
 
 # 通过序号打开上次列表里的推文
 twitter show 2                         # 打开上次 feed/search 的第 2 条
 twitter show 2 --full-text             # 在回复表格里显示完整正文
+twitter show 2 --reply-scope all
 twitter show 2 --json                  # 结构化输出
 
 # Twitter 长文
@@ -457,15 +506,19 @@ twitter article 1234567890 --output article.md
 # 列表时间线
 twitter list 1539453138322673664
 twitter list 1539453138322673664 --full-text
+twitter list-info 1539453138322673664
 
 # 用户
 twitter user elonmusk
 twitter user-posts elonmusk --max 20
 twitter user-posts elonmusk --full-text
 twitter user-posts elonmusk -o tweets.json
+twitter mentions elonmusk --max 20
 twitter likes elonmusk --max 30           # ⚠️ 仅可查看自己的点赞（2024年6月起平台已私密化）
 twitter likes elonmusk --full-text
 twitter likes elonmusk -o likes.json
+twitter owned-lists elonmusk --max 20
+twitter followed-lists elonmusk --max 20
 twitter followers elonmusk
 twitter following elonmusk
 
@@ -473,9 +526,13 @@ twitter following elonmusk
 twitter post "你好，世界！"
 twitter post "发图" --image photo.jpg              # 带图发推
 twitter post "多图" -i a.png -i b.jpg -i c.webp    # 最多 4 张图片
+twitter post "看这个" --video clip.mp4            # API 模式：带视频发推
+twitter post "看这个" --file clip.mp4 --alt-text "演示视频"
 twitter post "回复内容" --reply-to 1234567890
 twitter reply 1234567890 "回复" -i screenshot.png   # 带图回复
+twitter reply 1234567890 "回复" --video clip.mp4    # API 模式：带视频回复
 twitter quote 1234567890 "评论" -i chart.png        # 带图引用
+twitter quote 1234567890 "评论" --video clip.mp4    # API 模式：带视频引用
 twitter post "你好，世界！" --json
 twitter delete 1234567890
 twitter like 1234567890
@@ -490,12 +547,39 @@ twitter follow elonmusk --json
 
 ### 认证说明
 
-认证优先级：
+twitter-cli 现在支持两套认证后端：
 
-1. **环境变量**：`TWITTER_AUTH_TOKEN` + `TWITTER_CT0`
-2. **浏览器提取**（推荐）：Arc/Chrome/Edge/Firefox/Brave 全量 Cookie 提取
+1. **Cookie 认证**：`TWITTER_AUTH_TOKEN` + `TWITTER_CT0`，或从 Arc/Chrome/Edge/Firefox/Brave 自动提取浏览器 Cookie
+2. **官方 API v2 认证**：`TWITTER_API_BEARER_TOKEN` 用于官方只读接口；`TWITTER_API_ACCESS_TOKEN` 用于 OAuth 2.0 user context 写操作/当前用户接口
 
 推荐使用浏览器提取方式，会转发所有 Twitter Cookie，并按本机运行环境生成语言和平台请求头；它比仅发送 `auth_token` + `ct0` 更接近普通浏览器流量，但不等于完整浏览器自动化。
+
+可通过 `--auth-mode auto|cookie|api` 或 `TWITTER_AUTH_MODE=auto|cookie|api` 显式选择后端。
+
+**官方 API 模式配置：**
+
+```bash
+# 官方只读模式
+export TWITTER_AUTH_MODE=api
+export TWITTER_API_BEARER_TOKEN=...
+
+# OAuth 2.0 user context（whoami/status/post/like/retweet/follow/bookmarks 等需要）
+export TWITTER_API_ACCESS_TOKEN=...
+# 可选：避免写操作前额外请求 /users/me
+export TWITTER_API_USER_ID=...
+```
+
+**twitter-cli API 模式当前支持：**
+- 读取：`feed`、`bookmarks`、`tweet`、`show`、`article`、`list`、`list-info`、`likes`、`mentions`、`search`、`user`、`user-posts`、`owned-lists`、`followed-lists`、`followers`、`following`、`status`、`whoami`
+- 写入：`post`、`reply`、`quote`、`delete`、`like`、`unlike`、`retweet`、`unretweet`、`follow`、`unfollow`、`bookmark`、`unbookmark`
+- 媒体：`post` / `reply` / `quote` 支持图片和视频上传
+
+**API 模式说明：**
+- `feed` 和 `feed -t following` 当前都映射到官方 reverse-chronological home timeline。
+- `search --scope all` 会在权限允许时使用官方 full-archive search endpoint。
+- `tweet` / `show` 支持 `--reply-scope auto|recent|all`；`auto` 会优先对较老的推文使用 full-archive 搜索，并在必要时自动回退。
+- `--video` / `--file` 和 `--alt-text` 当前主要面向官方 API 模式。
+- `article` 基于官方 tweet lookup 返回的 article 字段做 best-effort 渲染；是否有正文取决于 API 返回内容。
 
 **Chrome 多 Profile 支持**：会自动遍历所有 Chrome profile。也可以通过环境变量指定：
 
