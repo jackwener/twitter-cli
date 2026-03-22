@@ -1061,8 +1061,8 @@ def following(screen_name, max_count, as_json, as_yaml):
 _MAX_IMAGES = 4  # Twitter allows up to 4 images per tweet
 
 
-def _upload_images(client, image_paths, rich_output=True):
-    # type: (TwitterClient, tuple, bool) -> list
+def _upload_images(client, image_paths, rich_output=True, compress=None):
+    # type: (TwitterClient, tuple, bool, Optional[int]) -> list
     """Upload images and return list of media_id strings."""
     if not image_paths:
         return []
@@ -1071,8 +1071,9 @@ def _upload_images(client, image_paths, rich_output=True):
     media_ids = []
     for i, path in enumerate(image_paths, 1):
         if rich_output:
-            console.print("📤 Uploading image %d/%d: %s" % (i, len(image_paths), path))
-        media_ids.append(client.upload_media(path))
+            suffix = " (quality=%d)" % compress if compress else ""
+            console.print("📤 Uploading image %d/%d: %s%s" % (i, len(image_paths), path, suffix))
+        media_ids.append(client.upload_media(path, compress=compress))
     return media_ids
 
 
@@ -1102,9 +1103,10 @@ def _write_action(emoji, action_desc, client_method, tweet_id, as_json=False, as
 @click.argument("text")
 @click.option("--reply-to", "-r", default=None, help="Reply to this tweet ID.")
 @click.option("--image", "-i", "images", multiple=True, type=click.Path(exists=True), help="Attach image (up to 4). Repeatable.")
+@click.option("--compress", type=click.IntRange(1, 100), default=None, help="Compress images at given quality (1-100). Requires Pillow.")
 @structured_output_options
-def post(text, reply_to, images, as_json, as_yaml):
-    # type: (str, Optional[str], tuple, bool, bool) -> None
+def post(text, reply_to, images, compress, as_json, as_yaml):
+    # type: (str, Optional[str], tuple, Optional[int], bool, bool) -> None
     """Post a new tweet. TEXT is the tweet content.
 
     Attach images with --image / -i (up to 4):
@@ -1112,13 +1114,14 @@ def post(text, reply_to, images, as_json, as_yaml):
     \b
       twitter post "Hello!" --image photo.jpg
       twitter post "Gallery" -i a.png -i b.png -i c.jpg
+      twitter post "Compressed" -i big.jpg --compress 90
     """
     normalized_reply_to = _normalize_tweet_id(reply_to) if reply_to else None
     action = "Replying to %s" % normalized_reply_to if normalized_reply_to else "Posting tweet"
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
 
     def operation(client: TwitterClient) -> WritePayload:
-        media_ids = _upload_images(client, images, rich_output=rich_output)
+        media_ids = _upload_images(client, images, rich_output=rich_output, compress=compress)
         tweet_id = client.create_tweet(text, reply_to_id=normalized_reply_to, media_ids=media_ids or None)
         return {"success": True, "action": "post", "id": tweet_id, "url": "https://x.com/i/status/%s" % tweet_id}
 
@@ -1138,14 +1141,15 @@ def post(text, reply_to, images, as_json, as_yaml):
 @click.argument("tweet_id")
 @click.argument("text")
 @click.option("--image", "-i", "images", multiple=True, type=click.Path(exists=True), help="Attach image (up to 4). Repeatable.")
+@click.option("--compress", type=click.IntRange(1, 100), default=None, help="Compress images at given quality (1-100). Requires Pillow.")
 @structured_output_options
-def reply_tweet(tweet_id, text, images, as_json, as_yaml):
-    # type: (str, str, tuple, bool, bool) -> None
+def reply_tweet(tweet_id, text, images, compress, as_json, as_yaml):
+    # type: (str, str, tuple, Optional[int], bool, bool) -> None
     """Reply to a tweet. TWEET_ID is the tweet to reply to, TEXT is the reply content."""
     tweet_id = _normalize_tweet_id(tweet_id)
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
     def operation(client: TwitterClient) -> WritePayload:
-        media_ids = _upload_images(client, images, rich_output=rich_output)
+        media_ids = _upload_images(client, images, rich_output=rich_output, compress=compress)
         new_id = client.create_tweet(text, reply_to_id=tweet_id, media_ids=media_ids or None)
         return {
             "success": True,
@@ -1171,14 +1175,15 @@ def reply_tweet(tweet_id, text, images, as_json, as_yaml):
 @click.argument("tweet_id")
 @click.argument("text")
 @click.option("--image", "-i", "images", multiple=True, type=click.Path(exists=True), help="Attach image (up to 4). Repeatable.")
+@click.option("--compress", type=click.IntRange(1, 100), default=None, help="Compress images at given quality (1-100). Requires Pillow.")
 @structured_output_options
-def quote_tweet(tweet_id, text, images, as_json, as_yaml):
-    # type: (str, str, tuple, bool, bool) -> None
+def quote_tweet(tweet_id, text, images, compress, as_json, as_yaml):
+    # type: (str, str, tuple, Optional[int], bool, bool) -> None
     """Quote-tweet a tweet. TWEET_ID is the tweet to quote, TEXT is the commentary."""
     tweet_id = _normalize_tweet_id(tweet_id)
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
     def operation(client: TwitterClient) -> WritePayload:
-        media_ids = _upload_images(client, images, rich_output=rich_output)
+        media_ids = _upload_images(client, images, rich_output=rich_output, compress=compress)
         new_id = client.quote_tweet(tweet_id, text, media_ids=media_ids or None)
         return {
             "success": True,

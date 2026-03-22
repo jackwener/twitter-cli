@@ -453,9 +453,11 @@ class TwitterClient:
 
     # ── Write operations ─────────────────────────────────────────────
 
-    # Supported image MIME types and max file size (5 MB)
+    # Supported image MIME types and max file sizes
     _SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-    _MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
+    _MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB (JPEG, PNG, WebP)
+    _MAX_GIF_SIZE = 15 * 1024 * 1024   # 15 MB (animated GIF)
+    _CHUNK_SIZE = 1024 * 1024          # 1 MB per APPEND segment
 
     def _write_delay(self):
         # type: () -> None
@@ -464,27 +466,46 @@ class TwitterClient:
         logger.debug("Write operation delay: %.1fs", delay)
         time.sleep(delay)
 
-    def upload_media(self, file_path):
-        # type: (str) -> str
+    def upload_media(self, file_path, compress=None):
+        # type: (str, Optional[int]) -> str
         """Upload an image file to Twitter.  Returns the media_id string.
 
-        Uses Twitter's chunked upload API (INIT → APPEND → FINALIZE).
-        Supports JPEG, PNG, GIF, and WebP images up to 5 MB.
+        Uses Twitter's chunked upload API (INIT -> APPEND -> FINALIZE).
+        Supports JPEG, PNG, GIF, and WebP.
+        - Images (JPEG/PNG/WebP): up to 5 MB, single-segment upload.
+        - GIFs: up to 15 MB, multi-segment chunked upload (1 MB chunks).
+
+        Args:
+            file_path: Path to the image file.
+            compress: Optional quality level (1-100). If set, re-encodes
+                      JPEG/PNG/WebP via Pillow before upload. GIFs are
+                      not compressed.
         """
         if not os.path.isfile(file_path):
             raise MediaUploadError("File not found: %s" % file_path)
-
-        file_size = os.path.getsize(file_path)
-        if file_size > self._MAX_IMAGE_SIZE:
-            raise MediaUploadError(
-                "File too large: %.1f MB (max %.0f MB)"
-                % (file_size / (1024 * 1024), self._MAX_IMAGE_SIZE / (1024 * 1024))
-            )
 
         media_type = mimetypes.guess_type(file_path)[0] or ""
         if media_type not in self._SUPPORTED_IMAGE_TYPES:
             raise MediaUploadError(
                 "Unsupported image format: %s (supported: jpeg, png, gif, webp)" % media_type
+            )
+
+        # ── Optional compression ──────────────────────────────────────
+        upload_bytes = None  # type: Optional[bytes]
+        if compress is not None and media_type != "image/gif":
+            upload_bytes = self._compress_image(file_path, media_type, compress)
+            file_size = len(upload_bytes)
+            logger.info("Compressed %s: %d -> %d bytes (quality=%d)",
+                        file_path, os.path.getsize(file_path), file_size, compress)
+        else:
+            file_size = os.path.getsize(file_path)
+
+        # ── Size validation ───────────────────────────────────────────
+        max_size = self._MAX_GIF_SIZE if media_type == "image/gif" else self._MAX_IMAGE_SIZE
+        if file_size > max_size:
+            raise MediaUploadError(
+                "File too large: %.1f MB (max %.0f MB)"
+                % (file_size / (1024 * 1024), max_size / (1024 * 1024))
             )
 
         upload_url = "https://upload.twitter.com/i/media/upload.json"
@@ -498,6 +519,8 @@ class TwitterClient:
             "total_bytes": str(file_size),
             "media_type": media_type,
         }
+        if media_type == "image/gif":
+            init_data["media_category"] = "tweet_gif"
         resp = session.post(upload_url, headers=headers, data=init_data, timeout=30)
         if resp.status_code >= 400:
             raise MediaUploadError("INIT failed (HTTP %d): %s" % (resp.status_code, resp.text[:300]))
@@ -510,23 +533,11 @@ class TwitterClient:
             raise MediaUploadError("INIT did not return media_id")
         logger.info("Media INIT: media_id=%s", media_id)
 
-        # ── APPEND ───────────────────────────────────────────────────
-        with open(file_path, "rb") as f:
-            media_data = base64.b64encode(f.read()).decode("ascii")
-
-        headers = self._build_headers(url=upload_url, method="POST")
-        # Remove JSON content-type — curl_cffi handles multipart encoding
-        headers.pop("Content-Type", None)
-        append_data = {
-            "command": "APPEND",
-            "media_id": media_id,
-            "segment_index": "0",
-            "media_data": media_data,
-        }
-        resp = session.post(upload_url, headers=headers, data=append_data, timeout=60)
-        if resp.status_code >= 400:
-            raise MediaUploadError("APPEND failed (HTTP %d): %s" % (resp.status_code, resp.text[:300]))
-        logger.info("Media APPEND: segment 0 uploaded")
+        # ── APPEND (chunked for GIFs, single-segment for images) ─────
+        if media_type == "image/gif" and file_size > self._CHUNK_SIZE:
+            self._append_chunked(session, upload_url, media_id, file_path, upload_bytes)
+        else:
+            self._append_single(session, upload_url, media_id, file_path, upload_bytes)
 
         # ── FINALIZE ─────────────────────────────────────────────────
         headers = self._build_headers(url=upload_url, method="POST")
@@ -541,6 +552,96 @@ class TwitterClient:
         logger.info("Media FINALIZE: media_id=%s ready", media_id)
 
         return media_id
+
+    def _append_single(self, session, upload_url, media_id, file_path, upload_bytes=None):
+        # type: (Any, str, str, str, Optional[bytes]) -> None
+        """Upload media in a single APPEND request (raw binary multipart)."""
+        headers = self._build_headers(url=upload_url, method="POST")
+        headers.pop("Content-Type", None)
+
+        if upload_bytes is not None:
+            import io
+            files = {"media": ("media", io.BytesIO(upload_bytes), "application/octet-stream")}
+        else:
+            files = {"media": ("media", open(file_path, "rb"), "application/octet-stream")}
+
+        data = {
+            "command": "APPEND",
+            "media_id": media_id,
+            "segment_index": "0",
+        }
+        resp = session.post(upload_url, headers=headers, data=data, files=files, timeout=60)
+        if upload_bytes is None:
+            files["media"][1].close()
+        if resp.status_code >= 400:
+            raise MediaUploadError("APPEND failed (HTTP %d): %s" % (resp.status_code, resp.text[:300]))
+        logger.info("Media APPEND: segment 0 uploaded (raw binary)")
+
+    def _append_chunked(self, session, upload_url, media_id, file_path, upload_bytes=None):
+        # type: (Any, str, str, str, Optional[bytes]) -> None
+        """Upload media in multiple APPEND requests (1 MB chunks)."""
+        import io
+
+        if upload_bytes is not None:
+            source = io.BytesIO(upload_bytes)
+        else:
+            source = open(file_path, "rb")
+
+        try:
+            segment_index = 0
+            while True:
+                chunk = source.read(self._CHUNK_SIZE)
+                if not chunk:
+                    break
+                headers = self._build_headers(url=upload_url, method="POST")
+                headers.pop("Content-Type", None)
+
+                files = {"media": ("media", io.BytesIO(chunk), "application/octet-stream")}
+                data = {
+                    "command": "APPEND",
+                    "media_id": media_id,
+                    "segment_index": str(segment_index),
+                }
+                resp = session.post(upload_url, headers=headers, data=data, files=files, timeout=60)
+                if resp.status_code >= 400:
+                    raise MediaUploadError(
+                        "APPEND segment %d failed (HTTP %d): %s"
+                        % (segment_index, resp.status_code, resp.text[:300])
+                    )
+                logger.info("Media APPEND: segment %d uploaded (%d bytes)", segment_index, len(chunk))
+                segment_index += 1
+        finally:
+            source.close()
+
+        logger.info("Media APPEND: %d segments uploaded (chunked)", segment_index)
+
+    @staticmethod
+    def _compress_image(file_path, media_type, quality):
+        # type: (str, str, int) -> bytes
+        """Compress an image using Pillow. Returns the re-encoded bytes."""
+        try:
+            from PIL import Image
+        except ImportError:
+            raise MediaUploadError(
+                "Pillow is required for --compress. Install it with: "
+                "pip install twitter-cli[compress]"
+            )
+
+        img = Image.open(file_path)
+        buf = __import__("io").BytesIO()
+
+        if media_type == "image/jpeg":
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+        elif media_type == "image/webp":
+            img.save(buf, format="WEBP", quality=quality, optimize=True)
+        elif media_type == "image/png":
+            img.save(buf, format="PNG", optimize=True)
+        else:
+            raise MediaUploadError("Compression not supported for %s" % media_type)
+
+        return buf.getvalue()
 
     def create_tweet(self, text, reply_to_id=None, media_ids=None):
         # type: (str, Optional[str], Optional[List[str]]) -> str
