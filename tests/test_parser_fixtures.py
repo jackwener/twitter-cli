@@ -36,6 +36,39 @@ def test_parse_home_timeline_fixture(fixture_loader) -> None:
     assert tweets[1].quoted_tweet.id == "30"
 
 
+def test_parse_home_timeline_fixture_marks_note_tweet_flag(fixture_loader) -> None:
+    """Tweet 1 carries a note_tweet payload; tweet 2 does not."""
+    payload = fixture_loader("home_timeline.json")
+
+    tweets, _ = parse_timeline_response(
+        payload,
+        lambda data: _deep_get(data, "data", "home", "home_timeline_urt", "instructions"),
+    )
+
+    assert tweets[0].is_note_tweet is True
+    assert tweets[0].is_article is False
+    assert tweets[1].is_note_tweet is False
+    assert tweets[1].is_article is False
+
+
+def test_parse_home_timeline_fixture_marks_article_flag(fixture_loader) -> None:
+    """Injecting an `article` payload on tweet 1 flips is_article to True."""
+    payload = fixture_loader("home_timeline.json")
+    tweet1_result = (
+        payload["data"]["home"]["home_timeline_urt"]
+        ["instructions"][0]["entries"][0]["content"]["itemContent"]
+        ["tweet_results"]["result"]
+    )
+    tweet1_result["article"] = {"article_results": {"result": {"title": "Demo"}}}
+
+    tweets, _ = parse_timeline_response(
+        payload,
+        lambda data: _deep_get(data, "data", "home", "home_timeline_urt", "instructions"),
+    )
+
+    assert tweets[0].is_article is True
+
+
 def test_parse_home_timeline_fixture_marks_promoted_entries(fixture_loader) -> None:
     payload = fixture_loader("home_timeline.json")
     entry = payload["data"]["home"]["home_timeline_urt"]["instructions"][0]["entries"][0]

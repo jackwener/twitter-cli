@@ -54,6 +54,8 @@ class Tweet:
     article_text: Optional[str] = None
     is_subscriber_only: bool = False
     is_promoted: bool = False
+    is_article: bool = False
+    is_note_tweet: bool = False
 
 
 @dataclass

@@ -481,6 +481,8 @@ def parse_tweet_result(result, depth=0):
         quoted_tweet=quoted_tweet,
         lang=actual_legacy.get("lang", ""),
         is_subscriber_only=(is_subscriber_only or retweet_subscriber_only) if is_retweet else is_subscriber_only,
+        is_article=bool(actual_data.get("article")),
+        is_note_tweet=bool(actual_data.get("note_tweet")),
         **_parse_article(actual_data),
     )
 

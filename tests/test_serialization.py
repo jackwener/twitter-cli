@@ -13,6 +13,16 @@ def test_tweet_roundtrip_dict(tweet_factory) -> None:
     assert restored.metrics.likes == tweet.metrics.likes
 
 
+def test_long_form_flags_roundtrip(tweet_factory) -> None:
+    tweet = tweet_factory("99", is_article=True, is_note_tweet=True)
+    payload = tweet_to_dict(tweet)
+    assert payload["isArticle"] is True
+    assert payload["isNoteTweet"] is True
+    restored = tweet_from_dict(payload)
+    assert restored.is_article is True
+    assert restored.is_note_tweet is True
+
+
 def test_tweets_json_roundtrip(tweet_factory) -> None:
     tweets = [tweet_factory("1"), tweet_factory("2", lang="zh")]
     raw = tweets_to_json(tweets)

@@ -48,6 +48,8 @@ def tweet_to_dict(tweet: Tweet) -> Dict[str, Any]:
         "score": tweet.score,
         "isSubscriberOnly": tweet.is_subscriber_only,
         "isPromoted": tweet.is_promoted,
+        "isArticle": tweet.is_article,
+        "isNoteTweet": tweet.is_note_tweet,
     }
     if tweet.article_title is not None:
         data["articleTitle"] = tweet.article_title
@@ -126,6 +128,8 @@ def tweet_from_dict(data: Dict[str, Any]) -> Tweet:
         article_text=_optional_str(data.get("articleText")),
         is_subscriber_only=bool(data.get("isSubscriberOnly", False)),
         is_promoted=bool(data.get("isPromoted", False)),
+        is_article=bool(data.get("isArticle", False)),
+        is_note_tweet=bool(data.get("isNoteTweet", False)),
     )
 
 
