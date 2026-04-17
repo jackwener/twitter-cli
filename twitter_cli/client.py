@@ -280,20 +280,23 @@ class TwitterClient:
             raise NotFoundError("User @%s not found" % screen_name)
 
         legacy = result.get("legacy", {})
+        core = result.get("core", {})
+        avatar = result.get("avatar", {})
+        location_obj = result.get("location", {})
         return UserProfile(
             id=result.get("rest_id", ""),
-            name=legacy.get("name", ""),
-            screen_name=legacy.get("screen_name", screen_name),
+            name=core.get("name") or legacy.get("name", ""),
+            screen_name=core.get("screen_name") or legacy.get("screen_name", screen_name),
             bio=legacy.get("description", ""),
-            location=legacy.get("location", ""),
+            location=location_obj.get("location") or legacy.get("location", ""),
             url=_deep_get(legacy, "entities", "url", "urls", 0, "expanded_url") or "",
             followers_count=_parse_int(legacy.get("followers_count"), 0),
             following_count=_parse_int(legacy.get("friends_count"), 0),
             tweets_count=_parse_int(legacy.get("statuses_count"), 0),
             likes_count=_parse_int(legacy.get("favourites_count"), 0),
             verified=bool(result.get("is_blue_verified") or legacy.get("verified", False)),
-            profile_image_url=legacy.get("profile_image_url_https", ""),
-            created_at=legacy.get("created_at", ""),
+            profile_image_url=avatar.get("image_url") or legacy.get("profile_image_url_https", ""),
+            created_at=core.get("created_at") or legacy.get("created_at", ""),
         )
 
     def fetch_user_tweets(self, user_id, count=20):
@@ -302,9 +305,13 @@ class TwitterClient:
         return self._fetch_timeline(
             "UserTweets",
             count,
-            lambda data: _deep_get(data, "data", "user", "result", "timeline_v2", "timeline", "instructions"),
+            lambda data: (
+                _deep_get(data, "data", "user", "result", "timeline", "timeline", "instructions")
+                or _deep_get(data, "data", "user", "result", "timeline_v2", "timeline", "instructions")
+            ),
             extra_variables={
                 "userId": user_id,
+                "includePromotedContent": True,
                 "withQuickPromoteEligibilityTweetFields": True,
                 "withVoice": True,
                 "withV2Timeline": True,
@@ -447,6 +454,7 @@ class TwitterClient:
         return self._fetch_user_list(
             "Followers", user_id, count,
             lambda data: _deep_get(data, "data", "user", "result", "timeline", "timeline", "instructions"),
+            use_post=True,
         )
 
     def fetch_following(self, user_id, count=20):
@@ -455,6 +463,7 @@ class TwitterClient:
         return self._fetch_user_list(
             "Following", user_id, count,
             lambda data: _deep_get(data, "data", "user", "result", "timeline", "timeline", "instructions"),
+            use_post=True,
         )
 
     # ── Write operations ─────────────────────────────────────────────
@@ -813,8 +822,8 @@ class TwitterClient:
             return tweets[:count], continuation_cursor
         return tweets[:count]
 
-    def _fetch_user_list(self, operation_name, user_id, count, get_instructions):
-        # type: (str, str, int, Callable[[Any], Any]) -> List[UserProfile]
+    def _fetch_user_list(self, operation_name, user_id, count, get_instructions, use_post=False):
+        # type: (str, str, int, Callable[[Any], Any], bool) -> List[UserProfile]
         """Generic user list fetcher (for followers/following) with pagination."""
         if count <= 0:
             return []
@@ -835,7 +844,10 @@ class TwitterClient:
             if cursor:
                 variables["cursor"] = cursor
 
-            data = self._graphql_get(operation_name, variables, FEATURES)
+            if use_post:
+                data = self._graphql_post(operation_name, variables, FEATURES)
+            else:
+                data = self._graphql_get(operation_name, variables, FEATURES)
             instructions = get_instructions(data)
             if not instructions:
                 logger.warning("No user list instructions found")
