@@ -375,15 +375,18 @@ def parse_user_result(user_data):
     """Parse a user result object into UserProfile."""
     if user_data.get("__typename") == "UserUnavailable":
         return None
-    legacy = user_data.get("legacy", {})
-    if not legacy:
-        return None
     # Twitter API migrated name/screen_name/created_at to core{}, avatar to
-    # avatar.image_url, and location to location.location. Fall back to legacy
-    # for older response shapes.
+    # avatar.image_url, and location to location.location. Newer responses
+    # may omit legacy{} entirely; fall back to legacy for older shapes.
+    legacy = user_data.get("legacy", {})
     core = user_data.get("core", {})
     avatar = user_data.get("avatar", {})
     location_obj = user_data.get("location", {})
+    # Use rest_id presence as the existence signal, not legacy{}, so
+    # this stays consistent with fetch_user() once Twitter fully drops
+    # legacy.
+    if not user_data.get("rest_id"):
+        return None
     return UserProfile(
         id=user_data.get("rest_id", ""),
         name=core.get("name") or legacy.get("name", ""),

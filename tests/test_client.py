@@ -1230,6 +1230,89 @@ class TestParseUserResult:
         assert user.tweets_count == 78
         assert user.likes_count == 0
 
+    def test_reads_core_avatar_location_when_legacy_absent(self):
+        """New API shape: name/screen_name/created_at moved to core{},
+        profile_image_url to avatar.image_url, location to location.location.
+        legacy{} may be empty or missing entirely."""
+        user = parse_user_result(
+            {
+                "rest_id": "user-2",
+                "core": {
+                    "name": "Bob",
+                    "screen_name": "bob",
+                    "created_at": "Tue Mar 21 17:25:43 +0000 2023",
+                },
+                "avatar": {"image_url": "https://example.com/bob.jpg"},
+                "location": {"location": "Earth"},
+                "is_blue_verified": True,
+            }
+        )
+
+        assert user is not None
+        assert user.id == "user-2"
+        assert user.name == "Bob"
+        assert user.screen_name == "bob"
+        assert user.created_at == "Tue Mar 21 17:25:43 +0000 2023"
+        assert user.profile_image_url == "https://example.com/bob.jpg"
+        assert user.location == "Earth"
+        assert user.verified is True
+
+    def test_prefers_core_over_legacy_when_both_present(self):
+        """During the migration both shapes coexist — core{} should win."""
+        user = parse_user_result(
+            {
+                "rest_id": "user-3",
+                "core": {"name": "NewName", "screen_name": "new_handle"},
+                "avatar": {"image_url": "https://example.com/new.jpg"},
+                "legacy": {
+                    "name": "OldName",
+                    "screen_name": "old_handle",
+                    "profile_image_url_https": "https://example.com/old.jpg",
+                    "description": "old bio",
+                },
+            }
+        )
+
+        assert user is not None
+        assert user.name == "NewName"
+        assert user.screen_name == "new_handle"
+        assert user.profile_image_url == "https://example.com/new.jpg"
+        # bio still comes from legacy — it hasn't migrated
+        assert user.bio == "old bio"
+
+    def test_falls_back_to_legacy_when_core_missing(self):
+        """Older response shape with only legacy{} — keep working."""
+        user = parse_user_result(
+            {
+                "rest_id": "user-4",
+                "legacy": {
+                    "name": "Carol",
+                    "screen_name": "carol",
+                    "profile_image_url_https": "https://example.com/carol.jpg",
+                    "location": "Mars",
+                    "created_at": "Mon Jan 01 00:00:00 +0000 2020",
+                },
+            }
+        )
+
+        assert user is not None
+        assert user.name == "Carol"
+        assert user.screen_name == "carol"
+        assert user.profile_image_url == "https://example.com/carol.jpg"
+        assert user.location == "Mars"
+        assert user.created_at == "Mon Jan 01 00:00:00 +0000 2020"
+
+    def test_returns_none_without_rest_id(self):
+        """No rest_id means no user — drop the row instead of emitting an
+        empty-id UserProfile."""
+        assert parse_user_result({"core": {"name": "Anon"}}) is None
+        assert parse_user_result({}) is None
+
+    def test_returns_none_for_user_unavailable(self):
+        assert (
+            parse_user_result({"__typename": "UserUnavailable", "rest_id": "x"}) is None
+        )
+
 
 # ── upload_media ─────────────────────────────────────────────────────────
 
