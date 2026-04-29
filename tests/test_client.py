@@ -424,6 +424,34 @@ class TestPaginationBehavior:
         assert cursor == "cursor-next"
         assert calls[0]["cursor"] == "cursor-prev"
 
+    def test_fetch_list_timeline_accepts_cursor_and_returns_cursor(self):
+        client = TwitterClient.__new__(TwitterClient)
+        client._request_delay = 0.0
+        client._max_count = 200
+
+        calls = []
+
+        def _graphql_get(operation_name, variables, features, field_toggles=None):
+            calls.append((operation_name, variables.copy()))
+            return {"page": 1}
+
+        client._graphql_get = _graphql_get
+
+        tweet = MagicMock(id="tweet-1")
+        with patch('twitter_cli.client.parse_timeline_response', return_value=([tweet], "cursor-next")):
+            tweets, cursor = client.fetch_list_timeline(
+                "list-1",
+                1,
+                cursor="cursor-prev",
+                return_cursor=True,
+            )
+
+        assert [item.id for item in tweets] == ["tweet-1"]
+        assert cursor == "cursor-next"
+        assert calls[0][0] == "ListLatestTweetsTimeline"
+        assert calls[0][1]["listId"] == "list-1"
+        assert calls[0][1]["cursor"] == "cursor-prev"
+
     def test_user_list_continues_when_cursor_advances_without_new_users(self):
         client = TwitterClient.__new__(TwitterClient)
         client._request_delay = 0.0

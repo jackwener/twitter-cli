@@ -430,8 +430,8 @@ class TwitterClient:
         logger.info("fetch_article: tweet_id=%s", tweet_id)
         return tweet
 
-    def fetch_list_timeline(self, list_id, count=20):
-        # type: (str, int) -> List[Tweet]
+    def fetch_list_timeline(self, list_id, count=20, cursor=None, return_cursor=False):
+        # type: (str, int, Optional[str], bool) -> Any
         """Fetch tweets from a Twitter List."""
         return self._fetch_timeline(
             "ListLatestTweetsTimeline",
@@ -439,6 +439,8 @@ class TwitterClient:
             lambda data: _deep_get(data, "data", "list", "tweets_timeline", "timeline", "instructions"),
             extra_variables={"listId": list_id},
             override_base_variables=True,
+            start_cursor=cursor,
+            return_cursor=return_cursor,
         )
 
     def fetch_followers(self, user_id, count=20):

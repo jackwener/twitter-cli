@@ -170,6 +170,7 @@ twitter show 2                         # Open tweet #2 from last feed/search lis
 twitter show 2 --full-text             # Full text in reply table
 twitter show 2 --json                  # Structured output
 twitter list 1539453138322673664       # List timeline
+twitter list 1539453138322673664 --cursor "<next-cursor>"
 twitter list 1539453138322673664 --full-text
 twitter user-posts elonmusk --max 20   # User's tweets
 twitter user-posts elonmusk --full-text

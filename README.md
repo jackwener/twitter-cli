@@ -136,6 +136,7 @@ twitter article 1234567890 --output article.md
 
 # List timeline
 twitter list 1539453138322673664
+twitter list 1539453138322673664 --cursor "<next-cursor-from-previous-response>"
 twitter list 1539453138322673664 --full-text
 
 # User
@@ -458,6 +459,7 @@ twitter article 1234567890 --output article.md
 
 # 列表时间线
 twitter list 1539453138322673664
+twitter list 1539453138322673664 --cursor "<上一页返回的 nextCursor>"
 twitter list 1539453138322673664 --full-text
 
 # 用户

@@ -119,6 +119,37 @@ def test_cli_feed_accepts_cursor_and_emits_pagination(monkeypatch) -> None:
     assert payload["pagination"]["nextCursor"] == "cursor-next"
 
 
+def test_cli_list_accepts_cursor_and_emits_pagination(monkeypatch, tweet_factory) -> None:
+    class FakeClient:
+        def fetch_list_timeline(
+            self,
+            list_id: str,
+            count: int,
+            cursor: str | None = None,
+            return_cursor: bool = False,
+        ):
+            assert list_id == "123"
+            assert count == 20
+            assert cursor == "cursor-prev"
+            assert return_cursor is True
+            return [tweet_factory("1")], "cursor-next"
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda: {"fetch": {"count": 20}, "filter": {}, "rateLimit": {}},
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["list", "123", "--cursor", "cursor-prev", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["data"][0]["id"] == "1"
+    assert payload["pagination"]["nextCursor"] == "cursor-next"
+
+
 def test_print_tweet_table_truncates_text_by_default(tweet_factory) -> None:
     long_text = "A" * 140
     console = Console(record=True, width=400)

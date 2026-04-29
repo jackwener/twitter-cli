@@ -1008,22 +1008,57 @@ def article(ctx, tweet_id, as_json, as_yaml, as_markdown, output_file):
 @cli.command(name="list")
 @click.argument("list_id")
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max tweets to fetch.")
+@click.option("--cursor", type=str, default=None, help="Pagination cursor for continuing a previous list request.")
 @structured_output_options
 @click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
 @click.option("--full-text", is_flag=True, help="Show full tweet text in table output.")
 @click.pass_context
-def list_timeline(ctx, list_id, max_count, as_json, as_yaml, do_filter, full_text):
-    # type: (Any, str, int, bool, bool, bool, bool) -> None
+def list_timeline(ctx, list_id, max_count, cursor, as_json, as_yaml, do_filter, full_text):
+    # type: (Any, str, int, Optional[str], bool, bool, bool, bool) -> None
     """Fetch tweets from a Twitter List. LIST_ID is the numeric list ID."""
     compact = ctx.obj.get("compact", False)
     config = load_config()
+    rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
+
     def _run():
         client = _get_client(config)
-        _fetch_and_display(
-            lambda count: client.fetch_list_timeline(list_id, count),
-            "list %s" % list_id, "📋", max_count, as_json, as_yaml, None, do_filter, config,
-            compact=compact, full_text=full_text,
+        try:
+            fetch_count = _resolve_configured_count(config, max_count)
+            if rich_output:
+                console.print("📋 Fetching list %s (%d tweets)...\n" % (list_id, fetch_count))
+            start = time.time()
+            tweets, next_cursor = client.fetch_list_timeline(
+                list_id,
+                fetch_count,
+                cursor=cursor,
+                return_cursor=True,
+            )
+            elapsed = time.time() - start
+            if rich_output:
+                console.print("✅ Fetched %d list %s in %.1fs\n" % (len(tweets), list_id, elapsed))
+        except (TwitterError, RuntimeError) as exc:
+            _exit_with_error(exc)
+
+        filtered = _apply_filter(tweets, do_filter, config, rich_output=rich_output)
+
+        if compact:
+            click.echo(tweets_to_compact_json(filtered))
+            return
+
+        save_tweet_cache(filtered)
+
+        if _emit_timeline_structured(filtered, next_cursor, as_json=as_json, as_yaml=as_yaml):
+            return
+
+        print_tweet_table(
+            filtered,
+            console,
+            title="📋 list %s — %d tweets" % (list_id, len(filtered)),
+            full_text=full_text,
         )
+        _print_show_hint()
+        console.print()
+
     _run_guarded(_run)
 
 
