@@ -20,6 +20,8 @@ def tweet_to_dict(tweet: Tweet) -> Dict[str, Any]:
             "screenName": tweet.author.screen_name,
             "profileImageUrl": tweet.author.profile_image_url,
             "verified": tweet.author.verified,
+            "followers": tweet.author.followers_count,
+            "following": tweet.author.following_count,
         },
         "metrics": {
             "likes": tweet.metrics.likes,
