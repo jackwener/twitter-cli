@@ -109,6 +109,7 @@ def test_extract_in_process_supports_arc(monkeypatch) -> None:
         brave=lambda: pytest.fail("brave should not be used when arc succeeds"),
     )
     monkeypatch.setitem(sys.modules, "browser_cookie3", fake_module)
+    monkeypatch.setattr(auth, "_iter_chrome_cookie_files", lambda browser_name: [])
 
     cookies, diagnostics = auth._extract_in_process()
 
@@ -407,6 +408,7 @@ def test_extract_in_process_returns_diagnostics_on_failure(monkeypatch) -> None:
         brave=lambda: (_ for _ in ()).throw(BrowserError("Brave not found")),
     )
     monkeypatch.setitem(sys.modules, "browser_cookie3", fake_module)
+    monkeypatch.setattr(auth, "_iter_chrome_cookie_files", lambda browser_name: [])
 
     cookies, diagnostics = auth._extract_in_process()
 

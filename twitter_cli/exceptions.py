@@ -60,6 +60,12 @@ class InvalidInputError(TwitterError):
     error_code = "invalid_input"
 
 
+class UnsupportedFeatureError(TwitterError):
+    """Raised when the selected auth backend does not support a command yet."""
+
+    error_code = "unsupported_operation"
+
+
 class TwitterAPIError(TwitterError):
     """Raised on non-OK Twitter API responses with HTTP status + message."""
 

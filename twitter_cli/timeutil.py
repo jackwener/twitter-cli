@@ -1,7 +1,7 @@
 """Time formatting utilities for twitter-cli.
 
-Converts Twitter API timestamps (e.g. "Sat Mar 08 12:00:00 +0000 2026")
-into human-friendly local time and relative time strings.
+Supports both legacy Twitter/X timestamps (e.g. "Sat Mar 08 12:00:00 +0000 2026")
+and official API v2 ISO-8601 timestamps (e.g. "2026-03-08T12:00:00.000Z").
 """
 
 from __future__ import annotations
@@ -17,14 +17,25 @@ _TWITTER_TIME_FORMAT = "%a %b %d %H:%M:%S %z %Y"
 
 
 def _parse_twitter_time(created_at: str) -> Optional[datetime]:
-    """Parse a Twitter API timestamp into a timezone-aware datetime."""
+    """Parse legacy or ISO-8601 Twitter timestamps into a timezone-aware datetime."""
     if not created_at:
         return None
     try:
         return datetime.strptime(created_at, _TWITTER_TIME_FORMAT)
     except (ValueError, TypeError):
+        pass
+
+    iso_candidate = created_at
+    if iso_candidate.endswith("Z"):
+        iso_candidate = iso_candidate[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(iso_candidate)
+    except (ValueError, TypeError):
         logger.debug("Failed to parse Twitter timestamp: %s", created_at)
         return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def format_local_time(created_at: str) -> str:

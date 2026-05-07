@@ -10,7 +10,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from .models import Tweet, UserProfile
+from .models import Tweet, TwitterList, UserProfile
 from .timeutil import format_local_time, format_relative_time
 
 
@@ -323,3 +323,68 @@ def print_user_table(
         table.add_row(str(i + 1), user_text, bio, stats)
 
     console.print(table)
+
+
+def print_list_table(
+    twitter_lists: List[TwitterList],
+    console: Optional[Console] = None,
+    title: Optional[str] = None,
+) -> None:
+    """Print Twitter lists as a rich table."""
+    if console is None:
+        console = _make_console()
+
+    if not title:
+        title = "📚 Lists — %d" % len(twitter_lists)
+
+    table = Table(title=title, show_lines=True, expand=True)
+    table.add_column("#", style="dim", width=3, justify="right")
+    table.add_column("List", style="cyan", width=28)
+    table.add_column("Description", ratio=3)
+    table.add_column("Stats", style="green", width=18, no_wrap=True)
+
+    for i, twitter_list in enumerate(twitter_lists):
+        privacy = "🔒 " if twitter_list.private else ""
+        owner = "@%s" % twitter_list.owner_screen_name if twitter_list.owner_screen_name else "unknown"
+        list_text = "%s%s\n%s" % (privacy, twitter_list.name, owner)
+
+        description = (twitter_list.description or "").replace("\n", " ").strip()
+        if len(description) > 100:
+            description = description[:97] + "..."
+
+        stats = (
+            "👥 %s followers\n📝 %s members"
+            % (
+                format_number(twitter_list.follower_count),
+                format_number(twitter_list.member_count),
+            )
+        )
+        table.add_row(str(i + 1), list_text, description, stats)
+
+    console.print(table)
+
+
+def print_list_detail(twitter_list: TwitterList, console: Optional[Console] = None) -> None:
+    """Print a single Twitter list in detail using a rich panel."""
+    if console is None:
+        console = _make_console()
+
+    privacy = "🔒 Private" if twitter_list.private else "🌐 Public"
+    header = "%s (%s)" % (twitter_list.name, privacy)
+    lines = []
+    if twitter_list.owner_screen_name:
+        lines.append("👤 @%s" % twitter_list.owner_screen_name)
+    if twitter_list.description:
+        lines.extend(["", twitter_list.description])
+    lines.extend(
+        [
+            "",
+            "👥 %s followers · 📝 %s members"
+            % (format_number(twitter_list.follower_count), format_number(twitter_list.member_count)),
+            "🆔 %s" % twitter_list.id,
+        ]
+    )
+    if twitter_list.created_at:
+        lines.append("📅 Created %s" % twitter_list.created_at)
+
+    console.print(Panel("\n".join(lines), title=header, border_style="magenta", expand=True))
