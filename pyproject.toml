@@ -30,6 +30,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+compress = [
+    "Pillow>=10.0",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.8",
