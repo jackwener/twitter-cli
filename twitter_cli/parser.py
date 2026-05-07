@@ -107,6 +107,8 @@ def _extract_author(user_data, user_legacy):
             or user_legacy.get("profile_image_url_https", "")
         ),
         verified=bool(user_data.get("is_blue_verified") or user_legacy.get("verified", False)),
+        followers_count=_parse_int(user_legacy.get("followers_count"), 0),
+        following_count=_parse_int(user_legacy.get("friends_count"), 0),
     )
 
 

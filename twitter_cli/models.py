@@ -16,6 +16,8 @@ class Author:
     screen_name: str
     profile_image_url: str = ""
     verified: bool = False
+    followers_count: int = 0
+    following_count: int = 0
 
 
 @dataclass
