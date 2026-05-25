@@ -559,9 +559,27 @@ class TwitterClient:
 
         return media_id
 
+    @staticmethod
+    def _weighted_length(text):
+        # type: (str) -> int
+        """Return X's weighted character count for a tweet.
+
+        X counts basic ASCII characters as 1 and most other characters (CJK,
+        emoji, etc.) as 2.  The standard tweet limit is 280 weighted units;
+        anything above must go through the CreateNoteTweet endpoint (X
+        Premium long-form post).
+        """
+        n = 0
+        for ch in text:
+            n += 1 if ord(ch) < 0x80 else 2
+        return n
+
     def create_tweet(self, text, reply_to_id=None, media_ids=None):
         # type: (str, Optional[str], Optional[List[str]]) -> str
         """Post a new tweet.  Returns the new tweet ID.
+
+        Automatically routes to the CreateNoteTweet GraphQL endpoint when the
+        weighted character count exceeds 280 (X Premium long-form post).
 
         Args:
             text: Tweet text content.
@@ -582,12 +600,32 @@ class TwitterClient:
                 "in_reply_to_tweet_id": reply_to_id,
                 "exclude_reply_user_ids": [],
             }
-        data = self._graphql_post("CreateTweet", variables, FEATURES)
+
+        # Route to long-form endpoint if the tweet exceeds the standard limit.
+        weighted = self._weighted_length(text)
+        if weighted > 280:
+            op_name = "CreateNoteTweet"
+            # CreateNoteTweet requires this field; without it X returns
+            # HTTP 200 with an empty tweet_results object (silent failure).
+            variables["disallowed_reply_options"] = None
+            logger.info(
+                "Tweet weighted=%d > 280, using CreateNoteTweet (long-form)",
+                weighted,
+            )
+        else:
+            op_name = "CreateTweet"
+
+        data = self._graphql_post(op_name, variables, FEATURES)
         self._write_delay()
-        result = _deep_get(data, "data", "create_tweet", "tweet_results", "result")
+        if op_name == "CreateNoteTweet":
+            result = _deep_get(
+                data, "data", "notetweet_create", "tweet_results", "result"
+            )
+        else:
+            result = _deep_get(data, "data", "create_tweet", "tweet_results", "result")
         if result:
             return result.get("rest_id", "")
-        raise TwitterAPIError(0, "Failed to create tweet")
+        raise TwitterAPIError(0, "Failed to create tweet (op=%s)" % op_name)
 
     def delete_tweet(self, tweet_id):
         # type: (str) -> bool
