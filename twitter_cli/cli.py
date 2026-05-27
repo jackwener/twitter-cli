@@ -1163,9 +1163,10 @@ def _write_action(emoji, action_desc, client_method, tweet_id, as_json=False, as
 @click.argument("text")
 @click.option("--reply-to", "-r", default=None, help="Reply to this tweet ID.")
 @click.option("--image", "-i", "images", multiple=True, type=click.Path(exists=True), help="Attach image (up to 4). Repeatable.")
+@click.option("--video", "-V", "video", default=None, type=click.Path(exists=True), help="Attach a single video (mp4/mov, up to 512 MB). Mutually exclusive with --image.")
 @structured_output_options
-def post(text, reply_to, images, as_json, as_yaml):
-    # type: (str, Optional[str], tuple, bool, bool) -> None
+def post(text, reply_to, images, video, as_json, as_yaml):
+    # type: (str, Optional[str], tuple, Optional[str], bool, bool) -> None
     """Post a new tweet. TEXT is the tweet content.
 
     Attach images with --image / -i (up to 4):
@@ -1173,13 +1174,26 @@ def post(text, reply_to, images, as_json, as_yaml):
     \b
       twitter post "Hello!" --image photo.jpg
       twitter post "Gallery" -i a.png -i b.png -i c.jpg
+
+    Or attach a single video with --video / -V (mutually exclusive with --image):
+
+    \b
+      twitter post "Demo" --video clip.mp4
     """
+    if video and images:
+        raise click.UsageError("--video and --image are mutually exclusive (X allows either up to 4 images, or 1 video).")
+
     normalized_reply_to = _normalize_tweet_id(reply_to) if reply_to else None
     action = "Replying to %s" % normalized_reply_to if normalized_reply_to else "Posting tweet"
     rich_output = not _structured_mode(as_json=as_json, as_yaml=as_yaml)
 
     def operation(client: TwitterClient) -> WritePayload:
-        media_ids = _upload_images(client, images, rich_output=rich_output)
+        if video:
+            if rich_output:
+                console.print("🎬 Uploading video (this may take a while for transcode)...")
+            media_ids = [client.upload_media(video)]
+        else:
+            media_ids = _upload_images(client, images, rich_output=rich_output)
         tweet_id = client.create_tweet(text, reply_to_id=normalized_reply_to, media_ids=media_ids or None)
         return {"success": True, "action": "post", "id": tweet_id, "url": "https://x.com/i/status/%s" % tweet_id}
 
