@@ -729,6 +729,38 @@ def test_cli_search_operators_only_no_query(monkeypatch) -> None:
     assert captured["query"] == "from:bbc"
 
 
+def test_cli_news_json(monkeypatch) -> None:
+    captured = {}
+
+    class FakeClient:
+        def fetch_explore_news(self, count: int):
+            captured["count"] = count
+            return [
+                {
+                    "rank": 1,
+                    "title": "Major AI story",
+                    "context": "Trending now · News · 105 posts",
+                    "post_count": 105,
+                    "url": "https://x.com/i/trending/123",
+                }
+            ]
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda: {"fetch": {"count": 50}, "filter": {}, "rateLimit": {}},
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["news", "--max", "5", "--json"])
+
+    assert result.exit_code == 0, f"news failed: {result.output}"
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["data"][0]["title"] == "Major AI story"
+    assert captured == {"count": 5}
+
+
 def test_cli_search_empty_query_no_options() -> None:
     runner = CliRunner()
 

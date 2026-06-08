@@ -118,6 +118,10 @@ twitter search --from bbc --exclude retweets --has links
 twitter search "topic" -o results.json         # Save to file
 twitter search "trending" --filter              # Apply ranking filter
 
+# Explore News
+twitter news                                    # Personalized Explore > News stories
+twitter news --max 20 --json                    # News stories as structured output
+
 # Tweet detail (view tweet + replies)
 twitter tweet 1234567890
 twitter tweet 1234567890 --full-text
