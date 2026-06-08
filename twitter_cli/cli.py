@@ -8,6 +8,7 @@ Read commands:
     twitter bookmarks folders <id>    # tweets in a folder
     twitter search "query"            # search tweets
     twitter search "query" --from user  # advanced search
+    twitter news                      # personalized Explore > News stories
     twitter user elonmusk             # user profile
     twitter user-posts elonmusk       # user tweets
     twitter likes elonmusk            # user likes
@@ -43,6 +44,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import click
 from rich.console import Console
+from rich.table import Table
 import yaml
 
 from . import __version__
@@ -356,6 +358,27 @@ def _emit_timeline_structured(tweets, next_cursor, *, as_json, as_yaml):
     if next_cursor:
         payload["pagination"] = {"nextCursor": next_cursor}
     return emit_structured(payload, as_json=as_json, as_yaml=as_yaml)
+
+
+def _print_news_table(stories, title="News stories"):
+    # type: (List[dict], str) -> None
+    """Print Explore News stories in a compact table."""
+    table = Table(title=title, show_lines=False)
+    table.add_column("#", justify="right", style="dim", width=4)
+    table.add_column("Story", style="bold", overflow="fold")
+    table.add_column("Context", overflow="fold")
+    table.add_column("Posts", justify="right")
+
+    for story in stories:
+        count = story.get("post_count")
+        table.add_row(
+            str(story.get("rank", "")),
+            str(story.get("title", "")),
+            str(story.get("context", "") or story.get("category", "") or ""),
+            f"{count:,}" if isinstance(count, int) and count > 0 else "",
+        )
+    console.print(table)
+    console.print()
 
 
 def _run_bookmarks_command(max_count, as_json, as_yaml, output_file, do_filter, compact=False, full_text=False):
@@ -794,6 +817,29 @@ def search(ctx, query, product, from_user, to_user, lang, since, until, has, exc
             "'%s' (%s)" % (composed_query, product), "🔍", max_count, as_json, as_yaml, output_file, do_filter, config,
             compact=compact, full_text=full_text,
         )
+    _run_guarded(_run)
+
+
+@cli.command(name="news")
+@click.option("--max", "-n", "max_count", type=int, default=20, show_default=True, help="Max stories to return.")
+@structured_output_options
+def news(max_count, as_json, as_yaml):
+    # type: (int, bool, bool) -> None
+    """Fetch personalized stories from Explore > News."""
+    config = load_config()
+
+    def _run():
+        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
+        client = _get_client(config, quiet=not rich_output)
+        if rich_output:
+            console.print("🗞️ Fetching Explore > News stories...\n")
+        stories = client.fetch_explore_news(count=max_count)
+
+        if emit_structured(stories, as_json=as_json, as_yaml=as_yaml):
+            return
+
+        _print_news_table(stories, title="🗞️ Explore News — %d stories" % len(stories))
+
     _run_guarded(_run)
 
 

@@ -9,6 +9,7 @@ import math
 import mimetypes
 import os
 import random
+import re
 import time
 import urllib.parse
 from typing import TYPE_CHECKING, Any, Callable, cast
@@ -128,6 +129,156 @@ def _url_fetch(url, headers=None):
     resp = session.get(url, headers=headers or {}, timeout=30)
     resp.raise_for_status()
     return resp.text
+
+
+def _coerce_string(value):
+    # type: (Any) -> str
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def _first_text(*values):
+    # type: (*Any) -> str
+    for value in values:
+        text = _coerce_string(value)
+        if text:
+            return text
+    return ""
+
+
+def _extract_post_count(text):
+    # type: (str) -> Optional[int]
+    match = re.search(r"([\d,.]+)\s*([KMB])?\s+(?:posts?|tweets?)", text or "", re.IGNORECASE)
+    if not match:
+        return None
+    value = _parse_int(match.group(1), 0)
+    suffix = (match.group(2) or "").upper()
+    if suffix == "K":
+        value *= 1_000
+    elif suffix == "M":
+        value *= 1_000_000
+    elif suffix == "B":
+        value *= 1_000_000_000
+    return value
+
+
+def _twitter_deeplink_to_url(url):
+    # type: (Optional[str]) -> Optional[str]
+    if not url:
+        return None
+    if url.startswith(("https://", "http://")):
+        return url
+    if url.startswith("twitter://trending/"):
+        trend_id = url.rsplit("/", 1)[-1]
+        return "https://x.com/i/trending/%s" % urllib.parse.quote(trend_id)
+    if url.startswith("twitter://search/"):
+        parsed = urllib.parse.urlparse(url)
+        query = urllib.parse.parse_qs(parsed.query)
+        raw_query = query.get("query", [""])[0]
+        if raw_query:
+            return "https://x.com/search?q=%s" % urllib.parse.quote(raw_query)
+        return "https://x.com/explore"
+    return url
+
+
+def _extract_query_from_url(url):
+    # type: (Optional[str]) -> str
+    if not url:
+        return ""
+    parsed = urllib.parse.urlparse(url)
+    params = urllib.parse.parse_qs(parsed.query)
+    return _first_text(params.get("query", [""])[0], params.get("q", [""])[0])
+
+
+def _extract_trend_id(url):
+    # type: (Optional[str]) -> Optional[str]
+    if not url:
+        return None
+    match = re.search(r"(?:twitter://trending/|/i/trending/)(\d+)", url)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _normalize_explore_story(raw, rank):
+    # type: (Any, int) -> Optional[Dict[str, Any]]
+    if not isinstance(raw, dict):
+        return None
+
+    typename = raw.get("__typename") or raw.get("itemType") or ""
+    metadata = raw.get("trend_metadata") or {}
+    social_context = raw.get("social_context") or {}
+    url_obj = metadata.get("url") or raw.get("trend_url") or raw.get("url") or {}
+    raw_url = url_obj.get("url") if isinstance(url_obj, dict) else _coerce_string(url_obj)
+
+    title = _first_text(
+        raw.get("name"),
+        raw.get("title"),
+        raw.get("headline"),
+        raw.get("display_text"),
+        raw.get("text"),
+        _deep_get(raw, "content", "title"),
+    )
+    if not title:
+        return None
+
+    context = _first_text(
+        social_context.get("text"),
+        metadata.get("domain_context"),
+        raw.get("context"),
+        raw.get("description"),
+    )
+    category = _first_text(metadata.get("domain_context"))
+
+    return {
+        "rank": rank,
+        "title": title,
+        "name": title,
+        "category": category,
+        "context": context,
+        "query": _extract_query_from_url(raw_url) or title,
+        "url": _twitter_deeplink_to_url(raw_url),
+        "post_count": _extract_post_count(context),
+        "trend_id": _extract_trend_id(raw_url),
+        "is_ai_trend": bool(raw.get("is_ai_trend")),
+        "type": typename,
+    }
+
+
+def _extract_explore_item_contents(instructions):
+    # type: (Any) -> List[Dict[str, Any]]
+    items = []  # type: List[Dict[str, Any]]
+    for instruction in instructions or []:
+        for entry in instruction.get("entries", []) or []:
+            content = entry.get("content", {}) or {}
+            item_content = content.get("itemContent")
+            if isinstance(item_content, dict):
+                items.append(item_content)
+
+            for module_item in content.get("items", []) or []:
+                module_content = _deep_get(module_item, "item", "itemContent")
+                if isinstance(module_content, dict):
+                    items.append(module_content)
+    return items
+
+
+def _normalize_explore_items(instructions, count=20):
+    # type: (Any, int) -> List[Dict[str, Any]]
+    stories = []  # type: List[Dict[str, Any]]
+    seen = set()
+    for raw in _extract_explore_item_contents(instructions):
+        story = _normalize_explore_story(raw, rank=len(stories) + 1)
+        if not story:
+            continue
+        key = (story.get("title"), story.get("url"))
+        if key in seen:
+            continue
+        seen.add(key)
+        stories.append(story)
+        if len(stories) >= count:
+            break
+    return stories
 
 
 # ── TwitterClient ────────────────────────────────────────────────────────
@@ -369,6 +520,39 @@ class TwitterClient:
             override_base_variables=True,
             use_post=True,
         )
+
+    def fetch_explore_news(self, count=20):
+        # type: (int) -> List[Dict[str, Any]]
+        """Fetch personalized Explore > News story cards."""
+        if count <= 0:
+            return []
+        count = min(count, self._max_count)
+
+        page = self._graphql_get(
+            "ExplorePage",
+            {"cursor": "", "context": "news"},
+            FEATURES,
+        )
+        timelines = _deep_get(page, "data", "explore_page", "body", "timelines") or []
+        news_timeline_id = None
+        for timeline in timelines:
+            if timeline.get("id") == "news":
+                news_timeline_id = _deep_get(timeline, "timeline", "id")
+                break
+        if not news_timeline_id:
+            raise TwitterAPIError(0, "Explore News timeline was not found")
+
+        data = self._graphql_get(
+            "GenericTimelineById",
+            {
+                "timelineId": news_timeline_id,
+                "count": min(count + 5, 40),
+                "withQuickPromoteEligibilityTweetFields": True,
+            },
+            FEATURES,
+        )
+        instructions = _deep_get(data, "data", "timeline", "timeline", "instructions")
+        return _normalize_explore_items(instructions, count=count)
 
     def fetch_tweet_detail(self, tweet_id, count=20):
         # type: (str, int) -> List[Tweet]

@@ -1545,3 +1545,104 @@ class TestFetchSearchUsesPost:
 
         assert captured.get("product") == "Latest"
         assert captured.get("querySource") == "typed_query"
+
+
+class TestFetchExploreNews:
+    def _make_client(self):
+        client = TwitterClient.__new__(TwitterClient)
+        client._auth_token = "tok"
+        client._ct0 = "ct0"
+        client._cookie_string = None
+        client._request_delay = 0
+        client._max_retries = 0
+        client._retry_base_delay = 0
+        client._max_count = 200
+        client._client_transaction = None
+        client._ct_init_attempted = True
+        return client
+
+    def test_fetch_explore_news_uses_news_timeline_id(self):
+        client = self._make_client()
+        calls = []
+
+        def mock_graphql_get(operation_name, variables, features, field_toggles=None):
+            calls.append((operation_name, variables))
+            if operation_name == "ExplorePage":
+                return {
+                    "data": {
+                        "explore_page": {
+                            "body": {
+                                "timelines": [
+                                    {"id": "for_you", "timeline": {"id": "for-you-id"}},
+                                    {"id": "news", "timeline": {"id": "news-id"}},
+                                ]
+                            }
+                        }
+                    }
+                }
+            if operation_name == "GenericTimelineById":
+                assert variables["timelineId"] == "news-id"
+                return {
+                    "data": {
+                        "timeline": {
+                            "timeline": {
+                                "instructions": [
+                                    {
+                                        "type": "TimelineAddEntries",
+                                        "entries": [
+                                            {
+                                                "entryId": "stories",
+                                                "content": {
+                                                    "entryType": "TimelineTimelineModule",
+                                                    "items": [
+                                                        {
+                                                            "item": {
+                                                                "itemContent": {
+                                                                    "__typename": "TimelineTrend",
+                                                                    "is_ai_trend": True,
+                                                                    "name": "Major AI story",
+                                                                    "social_context": {
+                                                                        "text": "Trending now · News · 26K posts"
+                                                                    },
+                                                                    "trend_metadata": {
+                                                                        "url": {
+                                                                            "url": "twitter://trending/123",
+                                                                            "urlType": "DeepLink",
+                                                                        }
+                                                                    },
+                                                                }
+                                                            }
+                                                        }
+                                                    ],
+                                                },
+                                            }
+                                        ],
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            raise AssertionError(operation_name)
+
+        client._graphql_get = mock_graphql_get
+
+        stories = client.fetch_explore_news(count=5)
+
+        assert calls[0][0] == "ExplorePage"
+        assert calls[1][0] == "GenericTimelineById"
+        assert stories == [
+            {
+                "rank": 1,
+                "title": "Major AI story",
+                "name": "Major AI story",
+                "category": "",
+                "context": "Trending now · News · 26K posts",
+                "query": "Major AI story",
+                "url": "https://x.com/i/trending/123",
+                "post_count": 26000,
+                "trend_id": "123",
+                "is_ai_trend": True,
+                "type": "TimelineTrend",
+            }
+        ]

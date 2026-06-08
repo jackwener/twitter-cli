@@ -34,6 +34,8 @@ FALLBACK_QUERY_IDS = {
     "TweetDetail": "xd_EMdYvB9hfZsZ6Idri0w",
     "Likes": "lIDpu_NWL7_VhimGGt0o6A",
     "SearchTimeline": "VhUd6vHVmLBcw0uX-6jMLA",
+    "ExplorePage": "ZOpNFXhFFI3YQtArxykOLw",
+    "GenericTimelineById": "wv4VPj4oH-yFD3cuQC7Tbg",
     "Bookmarks": "2neUNDqrrFzbLui8yallcQ",
     "ListLatestTweetsTimeline": "RlZzktZY_9wJynoepm8ZsA",
     "Followers": "IOh4aS6UdGWGJUYTqliQ7Q",
