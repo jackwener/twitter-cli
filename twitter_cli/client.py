@@ -40,6 +40,7 @@ from .exceptions import (
     TwitterAPIError,
 )
 from .graphql import (
+    ARTICLE_FEATURES,
     FALLBACK_QUERY_IDS,
     FEATURES,
     _build_graphql_url,
@@ -436,6 +437,86 @@ class TwitterClient:
 
         logger.info("fetch_article: tweet_id=%s", tweet_id)
         return tweet
+
+    def create_article(self, title, content_state, publish=True):
+        # type: (str, Dict[str, Any], bool) -> Dict[str, Any]
+        """Create an X Article draft, optionally publish it, and return metadata."""
+        if not title.strip():
+            raise TwitterAPIError(0, "Article title is required")
+
+        article_id = self._create_article_draft()
+        self._update_article_title(article_id, title)
+        self._update_article_content(article_id, content_state)
+        if publish:
+            published_id = self._publish_article(article_id)
+            if published_id:
+                article_id = published_id
+            url = "https://x.com/i/article/%s" % article_id
+        else:
+            url = "https://x.com/compose/article/edit/%s" % article_id
+
+        self._write_delay()
+        return {
+            "id": article_id,
+            "title": title,
+            "url": url,
+            "published": bool(publish),
+        }
+
+    def _create_article_draft(self):
+        # type: () -> str
+        variables = {
+            "content_state": {"blocks": [], "entity_map": []},
+            "title": "",
+        }
+        data = self._graphql_post("ArticleEntityDraftCreate", variables, ARTICLE_FEATURES)
+        result = _deep_get(
+            data,
+            "data",
+            "articleentity_create_draft",
+            "article_entity_results",
+            "result",
+        )
+        if result and result.get("rest_id"):
+            return result["rest_id"]
+        raise TwitterAPIError(0, "Failed to create article draft")
+
+    def _update_article_title(self, article_id, title):
+        # type: (str, str) -> None
+        variables = {
+            "articleEntityId": article_id,
+            "title": title,
+        }
+        self._graphql_post("ArticleEntityUpdateTitle", variables, ARTICLE_FEATURES)
+
+    def _update_article_content(self, article_id, content_state):
+        # type: (str, Dict[str, Any]) -> None
+        variables = {
+            "content_state": {
+                "blocks": content_state.get("blocks") or [],
+                "entity_map": content_state.get("entity_map") or [],
+            },
+            "article_entity": article_id,
+        }
+        self._graphql_post("ArticleEntityUpdateContent", variables, ARTICLE_FEATURES)
+
+    def _publish_article(self, article_id):
+        # type: (str) -> Optional[str]
+        variables = {
+            "articleEntityId": article_id,
+            "visibilitySetting": "Public",
+        }
+        data = self._graphql_post("ArticleEntityPublish", variables, ARTICLE_FEATURES)
+        result = _deep_get(
+            data,
+            "data",
+            "articleentity_publish",
+            "article_entity_results",
+            "result",
+        )
+        if result:
+            return result.get("rest_id")
+        return None
 
     def fetch_list_timeline(self, list_id, count=20, cursor=None, return_cursor=False):
         # type: (str, int, Optional[str], bool) -> Any
