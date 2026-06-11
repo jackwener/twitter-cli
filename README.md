@@ -36,6 +36,7 @@ A terminal-first CLI for Twitter/X: read timelines, bookmarks, and user profiles
 
 **Write:**
 - Post: create new tweets and replies, with optional image attachments (up to 4)
+- Long-form posts: Premium accounts automatically route text above the standard 280 weighted-character limit through X long-form posting
 - Quote: quote-tweet with optional images
 - Delete: remove your own tweets
 - Like / Unlike: manage tweet likes
@@ -152,6 +153,7 @@ twitter following elonmusk --max 50
 
 # Write operations
 twitter post "Hello from twitter-cli!"
+twitter post "Long-form text..."                  # Premium long-form posts route automatically
 twitter post "Hello!" --image photo.jpg            # Post with image
 twitter post "Gallery" -i a.png -i b.jpg -i c.webp  # Up to 4 images
 twitter post "reply text" --reply-to 1234567890
@@ -389,6 +391,7 @@ git clone git@github.com:jackwener/twitter-cli.git .agents/skills/twitter-cli
 
 **写入:**
 - 发推：发布新推文和回复，支持附带图片（最多 4 张，支持 JPEG/PNG/GIF/WebP）
+- 长文：Premium 账号在文本超过标准 280 加权字符限制时自动使用 X 长文发布
 - 引用推文：带评论的转发，也支持附带图片
 - 删除：删除自己的推文
 - 点赞 / 取消点赞
@@ -475,6 +478,7 @@ twitter following elonmusk
 
 # 写操作
 twitter post "你好，世界！"
+twitter post "长文内容..."                         # Premium 长文自动路由
 twitter post "发图" --image photo.jpg              # 带图发推
 twitter post "多图" -i a.png -i b.jpg -i c.webp    # 最多 4 张图片
 twitter post "回复内容" --reply-to 1234567890

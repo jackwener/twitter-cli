@@ -14,6 +14,8 @@ import pytest
 
 from twitter_cli.client import (
     _best_chrome_target,
+    _tweet_create_operation,
+    _tweet_weighted_length,
     TwitterClient,
 )
 from twitter_cli.exceptions import TwitterAPIError
@@ -1440,6 +1442,7 @@ class TestCreateTweetWithMedia:
         captured_body = {}
 
         def mock_graphql_post(operation_name, variables, features=None):
+            captured_body["operation_name"] = operation_name
             captured_body.update(variables)
             return {"data": {"create_tweet": {"tweet_results": {"result": {"rest_id": "99"}}}}}
 
@@ -1447,6 +1450,7 @@ class TestCreateTweetWithMedia:
 
         result = client.create_tweet("test", media_ids=["111", "222"])
         assert result == "99"
+        assert captured_body["operation_name"] == "CreateTweet"
 
         entities = captured_body["media"]["media_entities"]
         assert len(entities) == 2
@@ -1472,6 +1476,7 @@ class TestCreateTweetWithMedia:
         captured_body = {}
 
         def mock_graphql_post(operation_name, variables, features=None):
+            captured_body["operation_name"] = operation_name
             captured_body.update(variables)
             return {"data": {"create_tweet": {"tweet_results": {"result": {"rest_id": "88"}}}}}
 
@@ -1479,7 +1484,83 @@ class TestCreateTweetWithMedia:
 
         result = client.create_tweet("no media")
         assert result == "88"
+        assert captured_body["operation_name"] == "CreateTweet"
         assert captured_body["media"]["media_entities"] == []
+
+
+class TestCreateLongFormTweet:
+    """Tests routing oversized posts through CreateNoteTweet."""
+
+    @staticmethod
+    def _make_client():
+        client = TwitterClient.__new__(TwitterClient)
+        client._write_delay = lambda: None
+        return client
+
+    def test_weighted_length_routes_non_ascii_text_to_note_tweet(self):
+        text = "你" * 141
+        assert _tweet_weighted_length(text) == 282
+        assert _tweet_create_operation(text) == "CreateNoteTweet"
+
+    def test_standard_tweet_uses_create_tweet(self):
+        client = self._make_client()
+        calls = []
+
+        def mock_graphql_post(operation_name, variables, features=None):
+            calls.append((operation_name, variables))
+            return {"data": {"create_tweet": {"tweet_results": {"result": {"rest_id": "88"}}}}}
+
+        client._graphql_post = mock_graphql_post
+
+        assert client.create_tweet("x" * 280) == "88"
+        operation_name, variables = calls[0]
+        assert operation_name == "CreateTweet"
+        assert "disallowed_reply_options" not in variables
+
+    def test_long_tweet_uses_create_note_tweet(self):
+        client = self._make_client()
+        calls = []
+
+        def mock_graphql_post(operation_name, variables, features=None):
+            calls.append((operation_name, variables))
+            return {
+                "data": {
+                    "notetweet_create": {
+                        "tweet_results": {"result": {"rest_id": "99"}}
+                    }
+                }
+            }
+
+        client._graphql_post = mock_graphql_post
+
+        assert client.create_tweet("x" * 281, reply_to_id="123") == "99"
+        operation_name, variables = calls[0]
+        assert operation_name == "CreateNoteTweet"
+        assert variables["disallowed_reply_options"] is None
+        assert variables["includePromotedContent"] is False
+        assert variables["reply"]["in_reply_to_tweet_id"] == "123"
+
+    def test_long_quote_uses_create_note_tweet(self):
+        client = self._make_client()
+        calls = []
+
+        def mock_graphql_post(operation_name, variables, features=None):
+            calls.append((operation_name, variables))
+            return {
+                "data": {
+                    "notetweet_create": {
+                        "tweet_results": {"result": {"rest_id": "100"}}
+                    }
+                }
+            }
+
+        client._graphql_post = mock_graphql_post
+
+        assert client.quote_tweet("456", "x" * 281) == "100"
+        operation_name, variables = calls[0]
+        assert operation_name == "CreateNoteTweet"
+        assert variables["disallowed_reply_options"] is None
+        assert variables["attachment_url"] == "https://x.com/i/status/456"
 
 
 # ── fetch_search uses POST ────────────────────────────────────────────────
