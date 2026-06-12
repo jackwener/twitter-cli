@@ -617,6 +617,11 @@ class TwitterClient:
             # Required by the long-form mutation. Without it X can return HTTP
             # 200 with an empty tweet_results object instead of creating a post.
             variables["disallowed_reply_options"] = None
+            logger.info(
+                "Tweet weighted=%d > %d, using CreateNoteTweet (long-form)",
+                _tweet_weighted_length(text),
+                _STANDARD_TWEET_WEIGHT_LIMIT,
+            )
         data = self._graphql_post(operation_name, variables, FEATURES)
         self._write_delay()
         result = _created_tweet_result(data)
@@ -751,6 +756,11 @@ class TwitterClient:
         operation_name = _tweet_create_operation(text)
         if operation_name == "CreateNoteTweet":
             variables["disallowed_reply_options"] = None
+            logger.info(
+                "Quote weighted=%d > %d, using CreateNoteTweet (long-form)",
+                _tweet_weighted_length(text),
+                _STANDARD_TWEET_WEIGHT_LIMIT,
+            )
         data = self._graphql_post(operation_name, variables, FEATURES)
         self._write_delay()
         result = _created_tweet_result(data)
