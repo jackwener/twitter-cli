@@ -709,6 +709,34 @@ def test_cli_search_advanced_options(monkeypatch) -> None:
     assert captured["product"] == "Latest"
 
 
+def test_cli_search_uses_xquik_without_browser_cookies(monkeypatch) -> None:
+    captured = {}
+
+    def fake_xquik_search(query: str, count: int, product: str):
+        captured.update(query=query, count=count, product=product)
+        return []
+
+    monkeypatch.setattr("twitter_cli.cli.fetch_xquik_search", fake_xquik_search)
+    monkeypatch.setattr(
+        "twitter_cli.cli._get_client",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("cookie client used")),
+    )
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda: {"fetch": {"count": 15}, "filter": {}, "rateLimit": {}},
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["search", "python", "--from", "alice", "--provider", "xquik", "--type", "Latest", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured == {"query": "python from:alice", "count": 15, "product": "Latest"}
+    assert json.loads(result.output)["data"] == []
+
+
 def test_cli_search_operators_only_no_query(monkeypatch) -> None:
     captured = {}
 
