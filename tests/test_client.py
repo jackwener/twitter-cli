@@ -25,7 +25,7 @@ from twitter_cli.graphql import (
 )
 from twitter_cli.parser import (
     _deep_get,
-    _extract_atomic_markdown,
+    _extract_atomic_content,
     _extract_cursor,
     _extract_media,
     _normalize_article_entity_map,
@@ -531,7 +531,7 @@ class TestExtractAtomicMarkdown:
             "4": {"type": "MARKDOWN", "data": {"markdown": "```markdown\nconst answer = 42;\n```"}}
         }
 
-        assert _extract_atomic_markdown(block, entity_map) == ["```markdown\nconst answer = 42;\n```"]
+        assert _extract_atomic_content(block, entity_map) == ["```markdown\nconst answer = 42;\n```"]
 
     def test_ignores_non_markdown_entities(self):
         block = {"entityRanges": [{"key": 0}, {"key": 1}]}
@@ -540,13 +540,13 @@ class TestExtractAtomicMarkdown:
             "1": {"type": "LINK", "data": {"url": "https://example.com"}},
         }
 
-        assert _extract_atomic_markdown(block, entity_map) == []
+        assert _extract_atomic_content(block, entity_map) == []
 
     def test_ignores_blank_markdown(self):
         block = {"entityRanges": [{"key": 4}]}
         entity_map = {"4": {"type": "MARKDOWN", "data": {"markdown": "   \n"}}}
 
-        assert _extract_atomic_markdown(block, entity_map) == []
+        assert _extract_atomic_content(block, entity_map) == []
 
 
 class TestRenderArticleTextBlock:
