@@ -448,9 +448,7 @@ class TwitterClient:
         self._update_article_title(article_id, title)
         self._update_article_content(article_id, content_state)
         if publish:
-            published_id = self._publish_article(article_id)
-            if published_id:
-                article_id = published_id
+            article_id = self._publish_article(article_id)
             url = "https://x.com/i/article/%s" % article_id
         else:
             url = "https://x.com/compose/article/edit/%s" % article_id
@@ -496,12 +494,14 @@ class TwitterClient:
                 "blocks": content_state.get("blocks") or [],
                 "entity_map": content_state.get("entity_map") or [],
             },
+            # Unlike the other Article mutations, captured UpdateContent
+            # requests use this snake_case variable name.
             "article_entity": article_id,
         }
         self._graphql_post("ArticleEntityUpdateContent", variables, ARTICLE_FEATURES)
 
     def _publish_article(self, article_id):
-        # type: (str) -> Optional[str]
+        # type: (str) -> str
         variables = {
             "articleEntityId": article_id,
             "visibilitySetting": "Public",
@@ -514,9 +514,9 @@ class TwitterClient:
             "article_entity_results",
             "result",
         )
-        if result:
-            return result.get("rest_id")
-        return None
+        if result and result.get("rest_id"):
+            return result["rest_id"]
+        raise TwitterAPIError(0, "Failed to publish article")
 
     def fetch_list_timeline(self, list_id, count=20, cursor=None, return_cursor=False):
         # type: (str, int, Optional[str], bool) -> Any

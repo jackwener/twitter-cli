@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from twitter_cli.article import article_markdown_to_content_state
 
 
@@ -41,13 +43,11 @@ def test_article_markdown_to_content_state_empty_body_has_empty_block() -> None:
     content_state = article_markdown_to_content_state("\n\n")
 
     assert content_state["entity_map"] == []
-    assert content_state["blocks"] == [
-        {
-            "data": {},
-            "text": "",
-            "key": "48583",
-            "type": "unstyled",
-            "entity_ranges": [],
-            "inline_style_ranges": [],
-        }
-    ]
+    assert len(content_state["blocks"]) == 1
+    block = content_state["blocks"][0]
+    assert block["data"] == {}
+    assert block["text"] == ""
+    assert block["type"] == "unstyled"
+    assert block["entity_ranges"] == []
+    assert block["inline_style_ranges"] == []
+    assert re.fullmatch(r"[0-9a-f]{5}", block["key"])
