@@ -49,6 +49,10 @@ FALLBACK_QUERY_IDS = {
     "TweetResultByRestId": "7xflPyRiUxGVbJd4uWmbfg",
     "BookmarkFoldersSlice": "i78YDd0Tza-dV4SYs58kRg",
     "BookmarkFolderTimeline": "hNY7X2xE2N7HVF6Qb_mu6w",
+    "ArticleEntityDraftCreate": "g1l5N8BxGewYuCy5USe_bQ",
+    "ArticleEntityUpdateTitle": "x75E2ABzm8_mGTg1bz8hcA",
+    "ArticleEntityUpdateContent": "M7N2FrPrlOmu-YrVIBxFnQ",
+    "ArticleEntityPublish": "m4SHicYMoWO_qkLvjhDk7Q",
 }
 
 # ── Default feature flags ────────────────────────────────────────────────
@@ -77,6 +81,15 @@ _DEFAULT_FEATURES = {
 
 # Features dict that gets updated dynamically from x.com JS bundles
 FEATURES = dict(_DEFAULT_FEATURES)
+
+ARTICLE_FEATURES = {
+    "profile_label_improvements_pcf_label_in_post_enabled": True,
+    "responsive_web_profile_redirect_enabled": False,
+    "rweb_tipjar_consumption_enabled": False,
+    "verified_phone_label_enabled": False,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+}
 
 # Module-level caches (not thread-safe — CLI is single-threaded)
 _cached_query_ids: Dict[str, str] = {}

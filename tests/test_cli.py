@@ -364,6 +364,83 @@ def test_cli_article_rejects_compact_mode() -> None:
     assert "does not support --compact" in result.output
 
 
+def test_cli_article_publish_json(monkeypatch, tmp_path) -> None:
+    markdown_path = tmp_path / "article.md"
+    markdown_path.write_text("# Heading\n\nBody with [link](https://example.com).", encoding="utf-8")
+    captured = {}
+
+    class FakeClient:
+        def create_article(self, title, content_state, publish=True):
+            captured["title"] = title
+            captured["content_state"] = content_state
+            captured["publish"] = publish
+            return {
+                "id": "article-1",
+                "title": title,
+                "url": "https://x.com/i/article/article-1",
+                "published": publish,
+            }
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "article-publish",
+            str(markdown_path),
+            "--title",
+            "Article title",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output[result.output.index("{"):])
+    assert payload["data"]["id"] == "article-1"
+    assert payload["data"]["published"] is True
+    assert captured["title"] == "Article title"
+    assert captured["publish"] is True
+    assert captured["content_state"]["blocks"][0]["type"] == "header-one"
+
+
+def test_cli_article_publish_draft_yaml(monkeypatch, tmp_path) -> None:
+    markdown_path = tmp_path / "article.md"
+    markdown_path.write_text("Draft body", encoding="utf-8")
+    captured = {}
+
+    class FakeClient:
+        def create_article(self, title, content_state, publish=True):
+            captured["publish"] = publish
+            return {
+                "id": "draft-1",
+                "title": title,
+                "url": "https://x.com/compose/article/edit/draft-1",
+                "published": publish,
+            }
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "article-publish",
+            str(markdown_path),
+            "--title",
+            "Draft title",
+            "--draft",
+            "--yaml",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = yaml.safe_load(result.output)
+    assert payload["data"]["id"] == "draft-1"
+    assert payload["data"]["published"] is False
+    assert captured["publish"] is False
+
+
 def test_cli_bookmark_alias_works(monkeypatch) -> None:
     calls = []
 

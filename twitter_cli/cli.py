@@ -13,6 +13,7 @@ Read commands:
     twitter likes elonmusk            # user likes
     twitter tweet <id>                # tweet detail + replies
     twitter article <id>              # Twitter Article as Markdown
+    twitter article-publish file.md   # publish an X Article from Markdown
     twitter list <id>                 # list timeline
     twitter followers <handle>        # followers list
     twitter following <handle>        # following list
@@ -46,6 +47,7 @@ from rich.console import Console
 import yaml
 
 from . import __version__
+from .article import article_markdown_to_content_state
 from .auth import get_cookies
 from .cache import resolve_cached_tweet, save_tweet_cache
 from .exceptions import TwitterError
@@ -1003,6 +1005,41 @@ def article(ctx, tweet_id, as_json, as_yaml, as_markdown, output_file):
 
     print_article(article_tweet, console)
     console.print()
+
+
+@cli.command(name="article-publish")
+@click.argument("markdown_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--title", "-t", required=True, help="Article title.")
+@click.option("--draft", is_flag=True, help="Create a draft without publishing.")
+@structured_output_options
+def article_publish(markdown_file, title, draft, as_json, as_yaml):
+    # type: (str, str, bool, bool, bool) -> None
+    """Publish an X Article from a Markdown file."""
+    markdown = Path(markdown_file).read_text(encoding="utf-8")
+    content_state = article_markdown_to_content_state(markdown)
+
+    def operation(client: TwitterClient) -> WritePayload:
+        result = client.create_article(title, content_state, publish=not draft)
+        return {
+            "success": True,
+            "action": "article_publish",
+            "id": result["id"],
+            "title": result["title"],
+            "url": result["url"],
+            "published": result["published"],
+        }
+
+    action = "Creating article draft" if draft else "Publishing article"
+    payload = _run_write_command(
+        as_json=as_json,
+        as_yaml=as_yaml,
+        operation=operation,
+        progress_lines=["📝 %s..." % action],
+        success_lines=["[green]✅ Article %s![/green]" % ("draft created" if draft else "published")],
+        error_details={"action": "article_publish", "title": title, "draft": draft},
+    )
+    if payload and not _structured_mode(as_json=as_json, as_yaml=as_yaml):
+        console.print("🔗 %s" % payload["url"])
 
 
 @cli.command(name="list")

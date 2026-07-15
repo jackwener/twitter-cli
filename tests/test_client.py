@@ -1545,3 +1545,125 @@ class TestFetchSearchUsesPost:
 
         assert captured.get("product") == "Latest"
         assert captured.get("querySource") == "typed_query"
+
+
+class TestCreateArticle:
+    def _make_client(self):
+        client = TwitterClient.__new__(TwitterClient)
+        client._write_delay = lambda: None
+        return client
+
+    def test_create_article_publishes_draft_with_content(self):
+        client = self._make_client()
+        calls = []
+
+        def mock_graphql_post(operation_name, variables, features=None):
+            calls.append((operation_name, variables))
+            if operation_name == "ArticleEntityDraftCreate":
+                return {
+                    "data": {
+                        "articleentity_create_draft": {
+                            "article_entity_results": {
+                                "result": {"rest_id": "draft-1"}
+                            }
+                        }
+                    }
+                }
+            if operation_name == "ArticleEntityPublish":
+                return {
+                    "data": {
+                        "articleentity_publish": {
+                            "article_entity_results": {
+                                "result": {"rest_id": "article-1"}
+                            }
+                        }
+                    }
+                }
+            return {"data": {}}
+
+        client._graphql_post = mock_graphql_post
+
+        result = client.create_article(
+            "Title",
+            {"blocks": [{"text": "Body"}], "entity_map": []},
+            publish=True,
+        )
+
+        assert result == {
+            "id": "article-1",
+            "title": "Title",
+            "url": "https://x.com/i/article/article-1",
+            "published": True,
+        }
+        assert [call[0] for call in calls] == [
+            "ArticleEntityDraftCreate",
+            "ArticleEntityUpdateTitle",
+            "ArticleEntityUpdateContent",
+            "ArticleEntityPublish",
+        ]
+        assert calls[2][1] == {
+            "content_state": {"blocks": [{"text": "Body"}], "entity_map": []},
+            # Confirmed from X editor requests; UpdateContent differs from the
+            # other Article mutations, which use articleEntityId.
+            "article_entity": "draft-1",
+        }
+
+    def test_create_article_raises_when_publish_is_not_confirmed(self):
+        client = self._make_client()
+
+        def mock_graphql_post(operation_name, variables, features=None):
+            if operation_name == "ArticleEntityDraftCreate":
+                return {
+                    "data": {
+                        "articleentity_create_draft": {
+                            "article_entity_results": {
+                                "result": {"rest_id": "draft-1"}
+                            }
+                        }
+                    }
+                }
+            return {"data": {}}
+
+        client._graphql_post = mock_graphql_post
+
+        with pytest.raises(TwitterAPIError, match="Failed to publish article"):
+            client.create_article(
+                "Title",
+                {"blocks": [{"text": "Body"}], "entity_map": []},
+                publish=True,
+            )
+
+    def test_create_article_draft_skips_publish(self):
+        client = self._make_client()
+        calls = []
+
+        def mock_graphql_post(operation_name, variables, features=None):
+            calls.append(operation_name)
+            if operation_name == "ArticleEntityDraftCreate":
+                return {
+                    "data": {
+                        "articleentity_create_draft": {
+                            "article_entity_results": {
+                                "result": {"rest_id": "draft-2"}
+                            }
+                        }
+                    }
+                }
+            return {"data": {}}
+
+        client._graphql_post = mock_graphql_post
+
+        result = client.create_article(
+            "Draft title",
+            {"blocks": [], "entity_map": []},
+            publish=False,
+        )
+
+        assert result["id"] == "draft-2"
+        assert result["published"] is False
+        assert result["url"] == "https://x.com/compose/article/edit/draft-2"
+        assert calls == [
+            "ArticleEntityDraftCreate",
+            "ArticleEntityUpdateTitle",
+            "ArticleEntityUpdateContent",
+        ]
