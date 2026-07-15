@@ -44,6 +44,13 @@ A terminal-first CLI for Twitter/X: read timelines, bookmarks, and user profiles
 - Bookmark: bookmark/unbookmark (`favorite/unfavorite` kept as compatibility aliases)
 - Write commands also support explicit `--json` / `--yaml` output now
 
+Long-form routing follows the twitter-text v3 NFC and character-weight ranges,
+counts recognized URLs as 23 characters, and collapses common emoji sequences.
+It is a routing estimate rather than a full composer validator: invalid control
+characters remain server-validated, and malformed URLs or rare schemeless/IDN
+domains can differ because the CLI uses a compact matcher instead of vendoring
+twitter-text's generated URL/TLD grammar.
+
 **Auth & Anti-Detection:**
 - Cookie auth: use browser cookies or environment variables
 - Full cookie forwarding: extracts ALL browser cookies for richer browser context
@@ -398,6 +405,12 @@ git clone git@github.com:jackwener/twitter-cli.git .agents/skills/twitter-cli
 - 转推 / 取消转推
 - 书签 / 取消书签：bookmark/unbookmark（保留 `favorite/unfavorite` 兼容别名）
 - 写操作现在也显式支持 `--json` / `--yaml`
+
+长文路由遵循 twitter-text v3 的 NFC 规范化和字符权重区间，将识别到的 URL
+按 23 个字符计数，并合并常见 emoji 序列。它只用于选择发布接口，不是完整的
+编辑器校验器：非法控制字符仍由服务端校验；由于 CLI 没有内置 twitter-text
+生成的完整 URL/TLD 语法，格式错误的 URL 或少见的无协议/IDN 域名可能与网页
+编辑器计数不同。
 
 **认证与反风控:**
 - Cookie 认证：支持环境变量和浏览器自动提取

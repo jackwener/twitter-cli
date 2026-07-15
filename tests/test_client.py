@@ -14,14 +14,13 @@ import pytest
 
 from twitter_cli.client import (
     _best_chrome_target,
-    _tweet_create_operation,
-    _tweet_weighted_length,
     TwitterClient,
 )
 from twitter_cli.exceptions import TwitterAPIError
 from twitter_cli.graphql import (
     FEATURES,
     FALLBACK_QUERY_IDS,
+    NOTE_TWEET_FEATURES,
     _build_graphql_url,
     _update_features_from_html,
 )
@@ -1497,32 +1496,29 @@ class TestCreateLongFormTweet:
         client._write_delay = lambda: None
         return client
 
-    def test_weighted_length_routes_non_ascii_text_to_note_tweet(self):
-        text = "你" * 141
-        assert _tweet_weighted_length(text) == 282
-        assert _tweet_create_operation(text) == "CreateNoteTweet"
-
     def test_standard_tweet_uses_create_tweet(self):
         client = self._make_client()
         calls = []
 
         def mock_graphql_post(operation_name, variables, features=None):
-            calls.append((operation_name, variables))
+            calls.append((operation_name, variables, features))
             return {"data": {"create_tweet": {"tweet_results": {"result": {"rest_id": "88"}}}}}
 
         client._graphql_post = mock_graphql_post
 
         assert client.create_tweet("x" * 280) == "88"
-        operation_name, variables = calls[0]
+        operation_name, variables, features = calls[0]
         assert operation_name == "CreateTweet"
         assert "disallowed_reply_options" not in variables
+        assert features is FEATURES
+        assert NOTE_TWEET_FEATURES.keys().isdisjoint(features)
 
     def test_long_tweet_uses_create_note_tweet(self):
         client = self._make_client()
         calls = []
 
         def mock_graphql_post(operation_name, variables, features=None):
-            calls.append((operation_name, variables))
+            calls.append((operation_name, variables, features))
             return {
                 "data": {
                     "notetweet_create": {
@@ -1534,18 +1530,19 @@ class TestCreateLongFormTweet:
         client._graphql_post = mock_graphql_post
 
         assert client.create_tweet("x" * 281, reply_to_id="123") == "99"
-        operation_name, variables = calls[0]
+        operation_name, variables, features = calls[0]
         assert operation_name == "CreateNoteTweet"
         assert variables["disallowed_reply_options"] is None
         assert variables["includePromotedContent"] is False
         assert variables["reply"]["in_reply_to_tweet_id"] == "123"
+        assert features == dict(FEATURES, **NOTE_TWEET_FEATURES)
 
     def test_long_quote_uses_create_note_tweet(self):
         client = self._make_client()
         calls = []
 
         def mock_graphql_post(operation_name, variables, features=None):
-            calls.append((operation_name, variables))
+            calls.append((operation_name, variables, features))
             return {
                 "data": {
                     "notetweet_create": {
@@ -1557,10 +1554,11 @@ class TestCreateLongFormTweet:
         client._graphql_post = mock_graphql_post
 
         assert client.quote_tweet("456", "x" * 281) == "100"
-        operation_name, variables = calls[0]
+        operation_name, variables, features = calls[0]
         assert operation_name == "CreateNoteTweet"
         assert variables["disallowed_reply_options"] is None
         assert variables["attachment_url"] == "https://x.com/i/status/456"
+        assert features == dict(FEATURES, **NOTE_TWEET_FEATURES)
 
 
 # ── fetch_search uses POST ────────────────────────────────────────────────

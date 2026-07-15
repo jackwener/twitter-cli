@@ -44,6 +44,7 @@ from .graphql import (
     FEATURES,
     _build_graphql_url,
     _invalidate_query_id,
+    operation_features,
     _resolve_query_id,
     _update_features_from_html,
 )
@@ -55,6 +56,7 @@ from .parser import (
     parse_tweet_result,
     parse_user_result,
 )
+from .text import CREATE_NOTE_TWEET_OPERATION, tweet_create_route
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Set, Tuple  # noqa: F401
@@ -70,7 +72,6 @@ TimelineInstructionGetter = Callable[[Any], Any]
 
 # Hard ceiling to prevent accidental massive fetches
 _ABSOLUTE_MAX_COUNT = 500
-_STANDARD_TWEET_WEIGHT_LIMIT = 280
 
 
 # ── Session management ───────────────────────────────────────────────────
@@ -131,18 +132,19 @@ def _url_fetch(url, headers=None):
     return resp.text
 
 
-def _tweet_weighted_length(text):
-    # type: (str) -> int
-    """Return X's approximate weighted character count for composer routing."""
-    return sum(1 if ord(ch) < 0x80 else 2 for ch in text)
-
-
-def _tweet_create_operation(text):
-    # type: (str) -> str
-    """Return the GraphQL mutation for a standard or long-form post."""
-    if _tweet_weighted_length(text) > _STANDARD_TWEET_WEIGHT_LIMIT:
-        return "CreateNoteTweet"
-    return "CreateTweet"
+def _prepare_tweet_create(text, variables):
+    # type: (str, Dict[str, Any]) -> Tuple[str, Dict[str, Any]]
+    """Apply operation-specific variables and return its feature set."""
+    operation_name, weighted_length = tweet_create_route(text)
+    if operation_name == CREATE_NOTE_TWEET_OPERATION:
+        # Required by the long-form mutation. Without it X can return HTTP 200
+        # with an empty tweet_results object instead of creating a post.
+        variables["disallowed_reply_options"] = None
+        logger.info(
+            "Tweet weighted=%d, using CreateNoteTweet (long-form)",
+            weighted_length,
+        )
+    return operation_name, operation_features(operation_name)
 
 
 def _created_tweet_result(data):
@@ -612,17 +614,8 @@ class TwitterClient:
                 "in_reply_to_tweet_id": reply_to_id,
                 "exclude_reply_user_ids": [],
             }
-        operation_name = _tweet_create_operation(text)
-        if operation_name == "CreateNoteTweet":
-            # Required by the long-form mutation. Without it X can return HTTP
-            # 200 with an empty tweet_results object instead of creating a post.
-            variables["disallowed_reply_options"] = None
-            logger.info(
-                "Tweet weighted=%d > %d, using CreateNoteTweet (long-form)",
-                _tweet_weighted_length(text),
-                _STANDARD_TWEET_WEIGHT_LIMIT,
-            )
-        data = self._graphql_post(operation_name, variables, FEATURES)
+        operation_name, features = _prepare_tweet_create(text, variables)
+        data = self._graphql_post(operation_name, variables, features)
         self._write_delay()
         result = _created_tweet_result(data)
         if result:
@@ -753,15 +746,8 @@ class TwitterClient:
             "dark_request": False,
             "includePromotedContent": False,
         }
-        operation_name = _tweet_create_operation(text)
-        if operation_name == "CreateNoteTweet":
-            variables["disallowed_reply_options"] = None
-            logger.info(
-                "Quote weighted=%d > %d, using CreateNoteTweet (long-form)",
-                _tweet_weighted_length(text),
-                _STANDARD_TWEET_WEIGHT_LIMIT,
-            )
-        data = self._graphql_post(operation_name, variables, FEATURES)
+        operation_name, features = _prepare_tweet_create(text, variables)
+        data = self._graphql_post(operation_name, variables, features)
         self._write_delay()
         result = _created_tweet_result(data)
         if result:
