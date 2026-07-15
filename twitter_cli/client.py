@@ -44,6 +44,7 @@ from .graphql import (
     FEATURES,
     _build_graphql_url,
     _invalidate_query_id,
+    operation_features,
     _resolve_query_id,
     _update_features_from_html,
 )
@@ -55,6 +56,7 @@ from .parser import (
     parse_tweet_result,
     parse_user_result,
 )
+from .text import CREATE_NOTE_TWEET_OPERATION, tweet_create_route
 
 if TYPE_CHECKING:
     from typing import Dict, List, Optional, Set, Tuple  # noqa: F401
@@ -128,6 +130,31 @@ def _url_fetch(url, headers=None):
     resp = session.get(url, headers=headers or {}, timeout=30)
     resp.raise_for_status()
     return resp.text
+
+
+def _prepare_tweet_create(text, variables):
+    # type: (str, Dict[str, Any]) -> Tuple[str, Dict[str, Any]]
+    """Apply operation-specific variables and return its feature set."""
+    operation_name, weighted_length = tweet_create_route(text)
+    if operation_name == CREATE_NOTE_TWEET_OPERATION:
+        # Required by the long-form mutation. Without it X can return HTTP 200
+        # with an empty tweet_results object instead of creating a post.
+        variables["disallowed_reply_options"] = None
+        logger.info(
+            "Tweet weighted=%d, using CreateNoteTweet (long-form)",
+            weighted_length,
+        )
+    return operation_name, operation_features(operation_name)
+
+
+def _created_tweet_result(data):
+    # type: (Dict[str, Any]) -> Optional[Dict[str, Any]]
+    """Extract tweet result from CreateTweet or CreateNoteTweet responses."""
+    return (
+        _deep_get(data, "data", "create_tweet", "tweet_results", "result")
+        or _deep_get(data, "data", "notetweet_create", "tweet_results", "result")
+        or _deep_get(data, "data", "create_note_tweet", "tweet_results", "result")
+    )
 
 
 # ── TwitterClient ────────────────────────────────────────────────────────
@@ -563,6 +590,10 @@ class TwitterClient:
         # type: (str, Optional[str], Optional[List[str]]) -> str
         """Post a new tweet.  Returns the new tweet ID.
 
+        Posts over the standard weighted length limit are routed through
+        CreateNoteTweet, which is the GraphQL mutation X uses for Premium
+        long-form posts.
+
         Args:
             text: Tweet text content.
             reply_to_id: Optional tweet ID to reply to.
@@ -576,18 +607,20 @@ class TwitterClient:
             "media": {"media_entities": media_entities, "possibly_sensitive": False},
             "semantic_annotation_ids": [],
             "dark_request": False,
+            "includePromotedContent": False,
         }  # type: Dict[str, Any]
         if reply_to_id:
             variables["reply"] = {
                 "in_reply_to_tweet_id": reply_to_id,
                 "exclude_reply_user_ids": [],
             }
-        data = self._graphql_post("CreateTweet", variables, FEATURES)
+        operation_name, features = _prepare_tweet_create(text, variables)
+        data = self._graphql_post(operation_name, variables, features)
         self._write_delay()
-        result = _deep_get(data, "data", "create_tweet", "tweet_results", "result")
+        result = _created_tweet_result(data)
         if result:
             return result.get("rest_id", "")
-        raise TwitterAPIError(0, "Failed to create tweet")
+        raise TwitterAPIError(0, "Failed to create tweet (op=%s)" % operation_name)
 
     def delete_tweet(self, tweet_id):
         # type: (str) -> bool
@@ -711,13 +744,15 @@ class TwitterClient:
             "media": {"media_entities": media_entities, "possibly_sensitive": False},
             "semantic_annotation_ids": [],
             "dark_request": False,
+            "includePromotedContent": False,
         }
-        data = self._graphql_post("CreateTweet", variables, FEATURES)
+        operation_name, features = _prepare_tweet_create(text, variables)
+        data = self._graphql_post(operation_name, variables, features)
         self._write_delay()
-        result = _deep_get(data, "data", "create_tweet", "tweet_results", "result")
+        result = _created_tweet_result(data)
         if result:
             return result.get("rest_id", "")
-        raise TwitterAPIError(0, "Failed to create quote tweet")
+        raise TwitterAPIError(0, "Failed to create quote tweet (op=%s)" % operation_name)
 
     def follow_user(self, user_id):
         # type: (str) -> bool
