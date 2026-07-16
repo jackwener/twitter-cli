@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+
 from twitter_cli.parser import (
     _extract_atomic_content,
     _normalize_article_entity_map,
