@@ -358,25 +358,54 @@ def _emit_timeline_structured(tweets, next_cursor, *, as_json, as_yaml):
     return emit_structured(payload, as_json=as_json, as_yaml=as_yaml)
 
 
-def _run_bookmarks_command(max_count, as_json, as_yaml, output_file, do_filter, compact=False, full_text=False):
-    # type: (Optional[int], bool, bool, Optional[str], bool, bool, bool) -> None
+def _run_bookmarks_command(max_count, as_json, as_yaml, output_file, do_filter, compact=False, full_text=False, cursor=None):
+    # type: (Optional[int], bool, bool, Optional[str], bool, bool, bool, Optional[str]) -> None
+    """Fetch bookmarks with optional cursor-based pagination.
+
+    When ``cursor`` is supplied, continues a previous fetch from that cursor.
+    The JSON/YAML envelope emits ``pagination.nextCursor`` so callers can page
+    through bookmarks in small, resumable batches.
+    """
     config = load_config()
+    rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
 
     def _run():
-        client = _get_client(config)
-        _fetch_and_display(
-            lambda count: client.fetch_bookmarks(count),
-            "bookmarks",
-            "🔖",
-            max_count,
-            as_json,
-            as_yaml,
-            output_file,
-            do_filter,
-            config,
-            compact=compact,
+        client = _get_client(config, quiet=not rich_output)
+        fetch_count = _resolve_configured_count(config, max_count)
+        if rich_output:
+            console.print("🔖 Fetching bookmarks (%d tweets)...\n" % fetch_count)
+        start = time.time()
+        tweets, next_cursor = client.fetch_bookmarks(
+            fetch_count, cursor=cursor, return_cursor=True,
+        )
+        elapsed = time.time() - start
+        if rich_output:
+            console.print("✅ Fetched %d bookmarks in %.1fs\n" % (len(tweets), elapsed))
+
+        filtered = _apply_filter(tweets, do_filter, config, rich_output=rich_output)
+
+        if output_file:
+            Path(output_file).write_text(tweets_to_json(filtered), encoding="utf-8")
+            if rich_output:
+                console.print("💾 Saved to %s\n" % output_file)
+
+        if compact:
+            click.echo(tweets_to_compact_json(filtered))
+            return
+
+        save_tweet_cache(filtered)
+
+        if _emit_timeline_structured(filtered, next_cursor, as_json=as_json, as_yaml=as_yaml):
+            return
+
+        print_tweet_table(
+            filtered,
+            console,
+            title="🔖 Bookmarks — %d tweets" % len(filtered),
             full_text=full_text,
         )
+        _print_show_hint()
+        console.print()
 
     _run_guarded(_run)
 
@@ -509,13 +538,14 @@ def favorites(ctx, max_count, as_json, as_yaml, output_file, do_filter, full_tex
 
 @cli.group(name="bookmarks", invoke_without_command=True)
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max number of tweets to fetch.")
+@click.option("--cursor", type=str, default=None, help="Pagination cursor to continue a previous bookmarks fetch (enables resumable batched fetching).")
 @structured_output_options
 @click.option("--output", "-o", "output_file", type=str, default=None, help="Save tweets to JSON file.")
 @click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
 @click.option("--full-text", is_flag=True, help="Show full tweet text in table output.")
 @click.pass_context
-def bookmarks(ctx, max_count, as_json, as_yaml, output_file, do_filter, full_text):
-    # type: (Any, Optional[int], bool, bool, Optional[str], bool, bool) -> None
+def bookmarks(ctx, max_count, cursor, as_json, as_yaml, output_file, do_filter, full_text):
+    # type: (Any, Optional[int], Optional[str], bool, bool, Optional[str], bool, bool) -> None
     """Fetch bookmarked tweets, or manage bookmark folders."""
     if ctx.invoked_subcommand is None:
         _run_bookmarks_command(
@@ -526,6 +556,7 @@ def bookmarks(ctx, max_count, as_json, as_yaml, output_file, do_filter, full_tex
             do_filter,
             compact=ctx.obj.get("compact", False),
             full_text=full_text,
+            cursor=cursor,
         )
 
 

@@ -196,9 +196,15 @@ def _extract_article_media_url_map(article_results):
     return media_url_map
 
 
-def _extract_atomic_markdown(block, entity_map):
+def _extract_atomic_content(block, entity_map):
     # type: (Dict[str, Any], Dict[str, Any]) -> List[str]
-    """Extract embedded markdown/code payloads from atomic Draft.js entities."""
+    """Extract content from atomic Draft.js entities.
+
+    Handles:
+    - MARKDOWN: raw markdown/code blocks
+    - DIVIDER: horizontal rules (---)
+    - TWEET: embedded tweet links
+    """
     parts = []  # type: List[str]
     for entity_range in block.get("entityRanges", []) or []:
         if not isinstance(entity_range, dict):
@@ -207,28 +213,58 @@ def _extract_atomic_markdown(block, entity_map):
         entity = entity_map.get(str(entity_key)) if entity_key is not None else None
         if not isinstance(entity, dict):
             continue
-        if str(entity.get("type") or "").upper() != "MARKDOWN":
-            continue
-        markdown = _deep_get(entity, "data", "markdown")
-        if isinstance(markdown, str) and markdown.strip():
-            parts.append(markdown.strip())
+        entity_type = str(entity.get("type") or "").upper()
+        if entity_type == "MARKDOWN":
+            markdown = _deep_get(entity, "data", "markdown")
+            if isinstance(markdown, str) and markdown.strip():
+                parts.append(markdown.strip())
+        elif entity_type == "DIVIDER":
+            parts.append("---")
+        elif entity_type == "TWEET":
+            tweet_id = _deep_get(entity, "data", "tweetId")
+            if isinstance(tweet_id, str) and tweet_id:
+                parts.append("> [Embedded Tweet](https://x.com/i/status/%s)" % tweet_id)
     return parts
 
 
 def _render_article_text_block(block, entity_map):
     # type: (Dict[str, Any], Dict[str, Any]) -> str
-    """Render a Draft.js text block, converting inline hyperlinks to Markdown."""
+    """Render a Draft.js text block, converting inline hyperlinks and styles to Markdown.
+
+    Both inlineStyleRanges and entityRanges (links) reference the *original*
+    text offsets.  We collect all replacement operations as (start, end, text)
+    tuples, sort by offset descending, and apply right-to-left so that earlier
+    insertions don't shift later offsets.
+    """
     text = block.get("text", "")
     if not isinstance(text, str) or not text:
         return ""
 
-    entity_ranges = block.get("entityRanges", []) or []
-    if not entity_ranges:
-        return text
+    # Collect operations as (start, end, replacement) tuples
+    ops = []  # type: List[Tuple[int, int, str]]
 
-    rendered = text
-    ranges = []
-    for entity_range in entity_ranges:
+    # Inline styles (Bold, Italic, Code, Strikethrough)
+    style_markers = {
+        "BOLD": ("**", "**"), "ITALIC": ("*", "*"),
+        "CODE": ("`", "`"), "STRIKETHROUGH": ("~~", "~~"),
+    }  # type: Dict[str, Tuple[str, str]]
+    for sr in block.get("inlineStyleRanges", []) or []:
+        if not isinstance(sr, dict):
+            continue
+        style = str(sr.get("style", "")).upper()
+        offset = sr.get("offset")
+        length = sr.get("length")
+        if not isinstance(offset, int) or not isinstance(length, int) or length <= 0:
+            continue
+        if offset < 0 or offset + length > len(text):
+            continue
+        if style in style_markers:
+            open_m, close_m = style_markers[style]
+            segment = text[offset:offset + length]
+            ops.append((offset, offset + length, "%s%s%s" % (open_m, segment, close_m)))
+
+    # Entity links
+    for entity_range in block.get("entityRanges", []) or []:
         if not isinstance(entity_range, dict):
             continue
         entity_key = entity_range.get("key")
@@ -241,26 +277,31 @@ def _render_article_text_block(block, entity_map):
         length = entity_range.get("length")
         if not isinstance(offset, int) or not isinstance(length, int) or length <= 0:
             continue
+        if offset < 0 or offset + length > len(text):
+            continue
         url = _deep_get(entity, "data", "url")
         if not isinstance(url, str) or not url.strip():
             continue
-        ranges.append((offset, length, url.strip()))
-
-    for offset, length, url in sorted(ranges, reverse=True):
-        if offset < 0 or offset + length > len(rendered):
-            continue
-        label = rendered[offset:offset + length]
+        label = text[offset:offset + length]
         if not label:
             continue
-        # Escape markdown special chars: ] in labels and ) in URLs
         safe_label = label.replace("[", "\\[").replace("]", "\\]")
-        safe_url = url.replace(")", "%29")
-        rendered = "%s[%s](%s)%s" % (
-            rendered[:offset],
-            safe_label,
-            safe_url,
-            rendered[offset + length:],
-        )
+        safe_url = url.strip().replace(")", "%29")
+        ops.append((offset, offset + length, "[%s](%s)" % (safe_label, safe_url)))
+
+    if not ops:
+        return text
+
+    # Sort by start offset descending so right-to-left application preserves offsets.
+    # For overlapping ranges at the same start, process longer ranges first (larger end).
+    ops.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+    rendered = text
+    for start, end, replacement in ops:
+        if start < 0 or end > len(rendered):
+            continue
+        rendered = "%s%s%s" % (rendered[:start], replacement, rendered[end:])
+
     return rendered
 
 
@@ -334,7 +375,7 @@ def _parse_article(tweet_data):
     for block in blocks:
         block_type = block.get("type", "unstyled")  # type: str
         if block_type == "atomic":
-            parts.extend(_extract_atomic_markdown(block, entity_map))
+            parts.extend(_extract_atomic_content(block, entity_map))
             parts.extend(_extract_article_images(block, entity_map, media_url_map))
             ordered_counter = 0
             continue

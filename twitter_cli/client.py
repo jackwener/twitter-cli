@@ -177,9 +177,13 @@ class TwitterClient:
             return_cursor=return_cursor,
         )
 
-    def fetch_bookmarks(self, count=50):
-        # type: (int) -> List[Tweet]
-        """Fetch bookmarked tweets."""
+    def fetch_bookmarks(self, count=50, cursor=None, return_cursor=False):
+        # type: (int, Optional[str], bool) -> Any
+        """Fetch bookmarked tweets.
+
+        When ``return_cursor`` is True, returns a ``(tweets, next_cursor)``
+        tuple so callers can paginate by passing ``cursor`` on the next call.
+        """
         def get_instructions(data):
             # type: (Any) -> Any
             instructions = _deep_get(data, "data", "bookmark_timeline", "timeline", "instructions")
@@ -187,7 +191,13 @@ class TwitterClient:
                 instructions = _deep_get(data, "data", "bookmark_timeline_v2", "timeline", "instructions")
             return instructions
 
-        return self._fetch_timeline("Bookmarks", count, get_instructions)
+        return self._fetch_timeline(
+            "Bookmarks",
+            count,
+            get_instructions,
+            start_cursor=cursor,
+            return_cursor=return_cursor,
+        )
 
     def fetch_bookmark_folders(self):
         # type: () -> List[BookmarkFolder]
