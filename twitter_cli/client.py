@@ -1103,6 +1103,9 @@ class TwitterClient:
             # a different TLS fingerprint on the same IP — a detection vector.
             cffi_session = _get_cffi_session()
             ct_headers = _gen_ct_headers()
+            # Send auth cookies: X's guest homepage no longer embeds ondemand.s,
+            # so a cookieless fetch fails CT init and SearchTimeline returns 404.
+            ct_headers["Cookie"] = self._cookie_string or "auth_token=%s; ct0=%s" % (self._auth_token, self._ct0)
             home_page = cffi_session.get(
                 "https://x.com", headers=ct_headers, timeout=10,
             )
