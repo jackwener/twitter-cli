@@ -213,6 +213,31 @@ def test_cli_user_error_yaml(monkeypatch) -> None:
     assert payload["error"]["code"] == "not_found"
 
 
+def test_cli_tweet_reports_missing_focal_tweet_as_structured_error(monkeypatch) -> None:
+    from twitter_cli.exceptions import NotFoundError
+
+    class FakeClient:
+        def fetch_tweet_detail(self, tweet_id: str, max_count: int):
+            raise NotFoundError(
+                "Tweet %s was not returned by the TweetDetail response" % tweet_id
+            )
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda: {"fetch": {"count": 50}, "filter": {}, "rateLimit": {}},
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["tweet", "12345", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "not_found"
+    assert "TweetDetail response" in payload["error"]["message"]
+
+
 def test_cli_tweet_accepts_shared_url_with_query(monkeypatch) -> None:
     class FakeClient:
         def fetch_tweet_detail(self, tweet_id: str, max_count: int):
