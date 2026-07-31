@@ -210,6 +210,86 @@ class TestBuildGraphqlUrl:
         """Keep SearchTimeline fallback aligned with the live operation after issue #39."""
         assert FALLBACK_QUERY_IDS["SearchTimeline"] == "VhUd6vHVmLBcw0uX-6jMLA"
 
+    def test_home_timeline_fallback_query_ids(self):
+        """Keep home timeline fallbacks aligned with the current web bundle."""
+        assert FALLBACK_QUERY_IDS["HomeTimeline"] == "3b9_7tltt0hJRef-xm_3sw"
+        assert FALLBACK_QUERY_IDS["HomeLatestTimeline"] == "m1G65W9TS1-g-AllrKKYDQ"
+
+
+class TestStaleQueryRetry:
+    def test_graphql_get_retries_query_unspecified_with_live_id(self):
+        client = TwitterClient.__new__(TwitterClient)
+        fallback = FALLBACK_QUERY_IDS["HomeTimeline"]
+        urls = []
+
+        def api_get(url):
+            urls.append(url)
+            if len(urls) == 1:
+                raise TwitterAPIError(0, "Twitter API returned errors: Query: Unspecified")
+            return {"data": {"home": {}}}
+
+        client._api_get = api_get
+
+        with (
+            patch(
+                "twitter_cli.client._resolve_query_id",
+                side_effect=[fallback, "live-query-id"],
+            ) as resolve,
+            patch("twitter_cli.client._invalidate_query_id") as invalidate,
+        ):
+            result = client._graphql_get("HomeTimeline", {"count": 3}, FEATURES)
+
+        assert result == {"data": {"home": {}}}
+        assert fallback in urls[0]
+        assert "live-query-id" in urls[1]
+        assert resolve.call_count == 2
+        assert resolve.call_args_list[1].kwargs["prefer_fallback"] is False
+        invalidate.assert_called_once_with("HomeTimeline")
+
+    def test_graphql_post_retries_query_unspecified_with_live_id(self):
+        client = TwitterClient.__new__(TwitterClient)
+        fallback = FALLBACK_QUERY_IDS["CreateTweet"]
+        requests = []
+
+        def api_request(url, method="GET", body=None):
+            requests.append((url, method, body))
+            if len(requests) == 1:
+                raise TwitterAPIError(0, "Twitter API returned errors: Query: Unspecified")
+            return {"data": {"create_tweet": {}}}
+
+        client._api_request = api_request
+
+        with (
+            patch(
+                "twitter_cli.client._resolve_query_id",
+                side_effect=[fallback, "live-query-id"],
+            ),
+            patch("twitter_cli.client._invalidate_query_id") as invalidate,
+        ):
+            result = client._graphql_post("CreateTweet", {"tweet_text": "hello"}, FEATURES)
+
+        assert result == {"data": {"create_tweet": {}}}
+        assert requests[0][2]["queryId"] == fallback
+        assert requests[1][2]["queryId"] == "live-query-id"
+        invalidate.assert_called_once_with("CreateTweet")
+
+    def test_graphql_get_does_not_retry_unrelated_status_zero_error(self):
+        client = TwitterClient.__new__(TwitterClient)
+        fallback = FALLBACK_QUERY_IDS["HomeTimeline"]
+        client._api_get = MagicMock(
+            side_effect=TwitterAPIError(0, "Twitter API network error: timeout")
+        )
+
+        with (
+            patch("twitter_cli.client._resolve_query_id", return_value=fallback) as resolve,
+            patch("twitter_cli.client._invalidate_query_id") as invalidate,
+            pytest.raises(TwitterAPIError),
+        ):
+            client._graphql_get("HomeTimeline", {"count": 3}, FEATURES)
+
+        resolve.assert_called_once()
+        invalidate.assert_not_called()
+
 
 # ── _best_chrome_target ──────────────────────────────────────────────────
 
