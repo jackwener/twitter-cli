@@ -16,7 +16,7 @@ from twitter_cli.client import (
     _best_chrome_target,
     TwitterClient,
 )
-from twitter_cli.exceptions import TwitterAPIError
+from twitter_cli.exceptions import NotFoundError, TwitterAPIError
 from twitter_cli.graphql import (
     FEATURES,
     FALLBACK_QUERY_IDS,
@@ -330,6 +330,28 @@ class TestBuildHeaders:
         assert headers["sec-ch-ua-platform"] == '"Linux"'
         assert headers["sec-ch-ua-arch"] == '"x86"'
         assert headers["sec-ch-ua-platform-version"] == '""'
+
+
+class TestTweetDetailFetch:
+    def test_raises_when_focal_tweet_is_missing(self):
+        client = TwitterClient.__new__(TwitterClient)
+        client._fetch_timeline = MagicMock(return_value=[MagicMock(id="reply-1")])
+
+        with pytest.raises(
+            NotFoundError,
+            match="Tweet 123 was not returned by the TweetDetail response",
+        ):
+            client.fetch_tweet_detail("123", 20)
+
+    def test_places_focal_tweet_before_replies(self):
+        client = TwitterClient.__new__(TwitterClient)
+        reply = MagicMock(id="reply-1")
+        focal_tweet = MagicMock(id="123")
+        client._fetch_timeline = MagicMock(return_value=[reply, focal_tweet])
+
+        tweets = client.fetch_tweet_detail("123", 20)
+
+        assert tweets == [focal_tweet, reply]
 
 
 class TestPaginationBehavior:
