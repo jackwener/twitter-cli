@@ -1104,7 +1104,7 @@ class TwitterClient:
             cffi_session = _get_cffi_session()
             ct_headers = _gen_ct_headers()
             home_page = cffi_session.get(
-                "https://x.com", headers=ct_headers, timeout=10,
+                "https://x.com/home", headers=ct_headers, timeout=10,
             )
             home_page_response = bs4.BeautifulSoup(home_page.content, "html.parser")
             ondemand_url = get_ondemand_file_url(response=home_page_response)
