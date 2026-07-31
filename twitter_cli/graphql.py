@@ -27,8 +27,8 @@ TWITTER_OPENAPI_URL = (
 
 # ── Fallback (hardcoded) queryIds ────────────────────────────────────────
 FALLBACK_QUERY_IDS = {
-    "HomeTimeline": "c-CzHF1LboFilMpsx4ZCrQ",
-    "HomeLatestTimeline": "BKB7oi212Fi7kQtCBGE4zA",
+    "HomeTimeline": "3b9_7tltt0hJRef-xm_3sw",
+    "HomeLatestTimeline": "m1G65W9TS1-g-AllrKKYDQ",
     "UserByScreenName": "1VOOyvKkiI3FMmkeDNxM9A",
     "UserTweets": "q6xj5bs0hapm9309hexA_g",
     "TweetDetail": "xd_EMdYvB9hfZsZ6Idri0w",
