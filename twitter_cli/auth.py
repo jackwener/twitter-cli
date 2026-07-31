@@ -203,43 +203,99 @@ _CHROMIUM_BASE_DIRS: Dict[str, str] = {
     "brave": os.path.join("BraveSoftware", "Brave-Browser"),
 }
 
+_CUSTOM_CHROMIUM_BROWSER = "custom-chromium"
+
 # Default browser order for cookie extraction
 _DEFAULT_BROWSER_ORDER = ["arc", "chrome", "edge", "firefox", "brave"]
+_SUPPORTED_BROWSERS = set(_DEFAULT_BROWSER_ORDER) | {_CUSTOM_CHROMIUM_BROWSER}
+
+
+def _custom_chromium_user_data_dir() -> Optional[str]:
+    """Return a custom Chromium user-data/profile directory, if configured."""
+    root = os.environ.get("TWITTER_CHROMIUM_USER_DATA_DIR", "").strip()
+    if not root:
+        return None
+    return os.path.abspath(os.path.expanduser(root))
 
 
 def _get_browser_order() -> List[str]:
     """Return browser extraction order, respecting TWITTER_BROWSER env var."""
+    default_order = list(_DEFAULT_BROWSER_ORDER)
+    if _custom_chromium_user_data_dir():
+        default_order.insert(0, _CUSTOM_CHROMIUM_BROWSER)
+
     env = os.environ.get("TWITTER_BROWSER", "").strip().lower()
     if not env:
-        return _DEFAULT_BROWSER_ORDER
-    if env not in {"arc", "chrome", "edge", "firefox", "brave"}:
+        return default_order
+    if env not in _SUPPORTED_BROWSERS:
         logger.warning("TWITTER_BROWSER='%s' is invalid, using default order", env)
-        return _DEFAULT_BROWSER_ORDER
-    return [env] + [b for b in _DEFAULT_BROWSER_ORDER if b != env]
+        return default_order
+    return [env] + [b for b in default_order if b != env]
+
+
+def _profile_cookie_paths(profile_dir: str) -> List[str]:
+    """Return existing Chromium cookie database paths for one profile."""
+    paths = []
+    for relative_path in ("Cookies", os.path.join("Network", "Cookies")):
+        cookie_path = os.path.join(profile_dir, relative_path)
+        if os.path.exists(cookie_path):
+            paths.append(cookie_path)
+    return paths
+
+
+def _profile_name_from_cookie_file(cookie_file: str) -> str:
+    """Return the Chromium profile name for a cookie database path."""
+    parent = os.path.basename(os.path.dirname(cookie_file))
+    if parent == "Network":
+        return os.path.basename(os.path.dirname(os.path.dirname(cookie_file)))
+    return parent
+
+
+def _chromium_key_file_for_cookie(cookie_file: str) -> Optional[str]:
+    """Return the Local State file associated with a Chromium cookie database."""
+    candidates = []
+    custom_root = _custom_chromium_user_data_dir()
+    if custom_root:
+        candidates.append(os.path.join(custom_root, "Local State"))
+
+    profile_dir = os.path.dirname(cookie_file)
+    if os.path.basename(profile_dir) == "Network":
+        profile_dir = os.path.dirname(profile_dir)
+    candidates.append(os.path.join(os.path.dirname(profile_dir), "Local State"))
+
+    for candidate in dict.fromkeys(candidates):
+        if os.path.exists(candidate):
+            return candidate
+    return None
 
 
 def _iter_chrome_cookie_files(browser_name: str) -> List[str]:
-    """Return cookie file paths for all Chrome profiles.
+    """Return cookie file paths for all Chromium profiles.
 
     If TWITTER_CHROME_PROFILE is set, only that profile is returned.
     Otherwise yields Default first, then Profile 1, Profile 2, ... sorted.
     """
-    base_dir = _CHROMIUM_BASE_DIRS.get(browser_name)
-    if base_dir is None:
-        return []
-
-    if sys.platform == "darwin":
-        root = os.path.join(os.path.expanduser("~"), "Library", "Application Support", base_dir)
-    elif sys.platform == "win32":
-        if browser_name == "edge":
-            root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data")
-        else:
-            root = os.path.join(os.environ.get("LOCALAPPDATA", ""), base_dir)
+    if browser_name == _CUSTOM_CHROMIUM_BROWSER:
+        root = _custom_chromium_user_data_dir()
+        if not root:
+            return []
     else:
-        if browser_name == "edge":
-            root = os.path.join(os.path.expanduser("~"), ".config", "microsoft-edge")
+        base_dir = _CHROMIUM_BASE_DIRS.get(browser_name)
+        if base_dir is None:
+            return []
+
+        if sys.platform == "darwin":
+            root = os.path.join(os.path.expanduser("~"), "Library", "Application Support", base_dir)
+        elif sys.platform == "win32":
+            if browser_name == "edge":
+                root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data")
+            else:
+                root = os.path.join(os.environ.get("LOCALAPPDATA", ""), base_dir)
         else:
-            root = os.path.join(os.path.expanduser("~"), ".config", base_dir)
+            if browser_name == "edge":
+                root = os.path.join(os.path.expanduser("~"), ".config", "microsoft-edge")
+            else:
+                root = os.path.join(os.path.expanduser("~"), ".config", base_dir)
 
     if not os.path.isdir(root):
         return []
@@ -247,26 +303,42 @@ def _iter_chrome_cookie_files(browser_name: str) -> List[str]:
     # If user explicitly specifies a profile, only use that one
     env_profile = os.environ.get("TWITTER_CHROME_PROFILE", "").strip()
     if env_profile:
-        cookie_path = os.path.join(root, env_profile, "Cookies")
-        if os.path.exists(cookie_path):
-            logger.debug("Using specified Chrome profile: %s", env_profile)
-            return [cookie_path]
-        logger.warning("TWITTER_CHROME_PROFILE='%s' not found at %s", env_profile, cookie_path)
+        profile_dir = env_profile if os.path.isabs(env_profile) else os.path.join(root, env_profile)
+        profile_paths = _profile_cookie_paths(profile_dir)
+        if profile_paths:
+            logger.debug("Using specified Chromium profile: %s", env_profile)
+            return profile_paths
+        logger.warning("TWITTER_CHROME_PROFILE='%s' not found under %s", env_profile, root)
         return []
 
     # Auto-discover: Default first, then Profile N sorted
     paths: List[str] = []
-    default_cookies = os.path.join(root, "Default", "Cookies")
-    if os.path.exists(default_cookies):
-        paths.append(default_cookies)
+    seen = set()
 
+    def append_profile(profile_dir: str) -> None:
+        for cookie_path in _profile_cookie_paths(profile_dir):
+            if cookie_path not in seen:
+                seen.add(cookie_path)
+                paths.append(cookie_path)
+
+    # The configured path may be either a User Data root or one profile.
+    append_profile(root)
+    append_profile(os.path.join(root, "Default"))
     profile_dirs = sorted(glob.glob(os.path.join(root, "Profile *")))
     for profile_dir in profile_dirs:
-        cookie_file = os.path.join(profile_dir, "Cookies")
-        if os.path.exists(cookie_file):
-            paths.append(cookie_file)
+        append_profile(profile_dir)
 
     return paths
+
+
+def _get_browser_cookie_fn(browser_cookie3: Any, browser_name: str) -> Any:
+    """Return a browser-cookie3 loader for a configured browser."""
+    if browser_name == _CUSTOM_CHROMIUM_BROWSER:
+        return lambda cookie_file=None: browser_cookie3.chromium(
+            cookie_file=cookie_file,
+            key_file=_chromium_key_file_for_cookie(cookie_file) if cookie_file else None,
+        )
+    return getattr(browser_cookie3, browser_name)
 
 
 def _extract_in_process() -> Tuple[Optional[Dict[str, str]], List[str]]:
@@ -286,22 +358,25 @@ def _extract_in_process() -> Tuple[Optional[Dict[str, str]], List[str]]:
         logger.debug("browser_cookie3 not installed, skipping in-process extraction")
         return None, ["browser-cookie3 not installed"]
 
-    browser_fns = {
-        "arc": browser_cookie3.arc,
-        "chrome": browser_cookie3.chrome,
-        "edge": browser_cookie3.edge,
-        "firefox": browser_cookie3.firefox,
-        "brave": browser_cookie3.brave,
-    }
     attempts: List[str] = []
     diagnostics: List[str] = []
 
     for name in _get_browser_order():
-        fn = browser_fns[name]
-        if name in _CHROMIUM_BASE_DIRS:
+        try:
+            fn = _get_browser_cookie_fn(browser_cookie3, name)
+        except AttributeError as e:
+            logger.debug("%s browser-cookie3 loader missing: %s", name, e)
+            attempts.append("%s=missing-loader" % name)
+            diagnostics.append("%s: %s" % (name, e))
+            continue
+
+        if name in _CHROMIUM_BASE_DIRS or name == _CUSTOM_CHROMIUM_BROWSER:
             # Chromium-based: iterate all profiles
             cookie_files = _iter_chrome_cookie_files(name)
             if not cookie_files:
+                if name == _CUSTOM_CHROMIUM_BROWSER:
+                    attempts.append("%s=not-found" % name)
+                    continue
                 # No profile dirs found — try the default (no cookie_file arg)
                 try:
                     jar = fn()
@@ -318,7 +393,7 @@ def _extract_in_process() -> Tuple[Optional[Dict[str, str]], List[str]]:
                 continue
 
             for cookie_file in cookie_files:
-                profile_name = os.path.basename(os.path.dirname(cookie_file))
+                profile_name = _profile_name_from_cookie_file(cookie_file)
                 try:
                     jar = fn(cookie_file=cookie_file)
                 except Exception as e:
@@ -370,38 +445,89 @@ CHROMIUM_BASE_DIRS = {
     "edge": os.path.join("Microsoft Edge"),
     "brave": os.path.join("BraveSoftware", "Brave-Browser"),
 }
+CUSTOM_CHROMIUM_BROWSER = "custom-chromium"
+
+def custom_chromium_user_data_dir():
+    root = os.environ.get("TWITTER_CHROMIUM_USER_DATA_DIR", "").strip()
+    if not root:
+        return None
+    return os.path.abspath(os.path.expanduser(root))
+
+def profile_cookie_paths(profile_dir):
+    paths = []
+    for relative_path in ("Cookies", os.path.join("Network", "Cookies")):
+        cookie_path = os.path.join(profile_dir, relative_path)
+        if os.path.exists(cookie_path):
+            paths.append(cookie_path)
+    return paths
+
+def profile_name_from_cookie_file(cookie_file):
+    parent = os.path.basename(os.path.dirname(cookie_file))
+    if parent == "Network":
+        return os.path.basename(os.path.dirname(os.path.dirname(cookie_file)))
+    return parent
+
+def chromium_key_file_for_cookie(cookie_file):
+    candidates = []
+    custom_root = custom_chromium_user_data_dir()
+    if custom_root:
+        candidates.append(os.path.join(custom_root, "Local State"))
+    profile_dir = os.path.dirname(cookie_file)
+    if os.path.basename(profile_dir) == "Network":
+        profile_dir = os.path.dirname(profile_dir)
+    candidates.append(os.path.join(os.path.dirname(profile_dir), "Local State"))
+    for candidate in dict.fromkeys(candidates):
+        if os.path.exists(candidate):
+            return candidate
+    return None
 
 def iter_cookie_files(browser_name):
-    base_dir = CHROMIUM_BASE_DIRS.get(browser_name)
-    if base_dir is None:
-        return []
-    if sys.platform == "darwin":
-        root = os.path.join(os.path.expanduser("~"), "Library", "Application Support", base_dir)
-    elif sys.platform == "win32":
-        if browser_name == "edge":
-            root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data")
-        else:
-            root = os.path.join(os.environ.get("LOCALAPPDATA", ""), base_dir)
+    if browser_name == CUSTOM_CHROMIUM_BROWSER:
+        root = custom_chromium_user_data_dir()
+        if not root:
+            return []
     else:
-        if browser_name == "edge":
-            root = os.path.join(os.path.expanduser("~"), ".config", "microsoft-edge")
+        base_dir = CHROMIUM_BASE_DIRS.get(browser_name)
+        if base_dir is None:
+            return []
+        if sys.platform == "darwin":
+            root = os.path.join(os.path.expanduser("~"), "Library", "Application Support", base_dir)
+        elif sys.platform == "win32":
+            if browser_name == "edge":
+                root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data")
+            else:
+                root = os.path.join(os.environ.get("LOCALAPPDATA", ""), base_dir)
         else:
-            root = os.path.join(os.path.expanduser("~"), ".config", base_dir)
+            if browser_name == "edge":
+                root = os.path.join(os.path.expanduser("~"), ".config", "microsoft-edge")
+            else:
+                root = os.path.join(os.path.expanduser("~"), ".config", base_dir)
     if not os.path.isdir(root):
         return []
     env_profile = os.environ.get("TWITTER_CHROME_PROFILE", "").strip()
     if env_profile:
-        p = os.path.join(root, env_profile, "Cookies")
-        return [p] if os.path.exists(p) else []
+        profile_dir = env_profile if os.path.isabs(env_profile) else os.path.join(root, env_profile)
+        return profile_cookie_paths(profile_dir)
     paths = []
-    d = os.path.join(root, "Default", "Cookies")
-    if os.path.exists(d):
-        paths.append(d)
+    seen = set()
+    def append_profile(profile_dir):
+        for cookie_path in profile_cookie_paths(profile_dir):
+            if cookie_path not in seen:
+                seen.add(cookie_path)
+                paths.append(cookie_path)
+    append_profile(root)
+    append_profile(os.path.join(root, "Default"))
     for pd in sorted(glob.glob(os.path.join(root, "Profile *"))):
-        cf = os.path.join(pd, "Cookies")
-        if os.path.exists(cf):
-            paths.append(cf)
+        append_profile(pd)
     return paths
+
+def get_browser_cookie_fn(browser_name):
+    if browser_name == CUSTOM_CHROMIUM_BROWSER:
+        return lambda cookie_file=None: browser_cookie3.chromium(
+            cookie_file=cookie_file,
+            key_file=chromium_key_file_for_cookie(cookie_file) if cookie_file else None,
+        )
+    return getattr(browser_cookie3, browser_name)
 
 def extract_from_jar(jar, name, profile=""):
     result = {}
@@ -424,25 +550,27 @@ def extract_from_jar(jar, name, profile=""):
     return None
 
 DEFAULT_ORDER = ["arc", "chrome", "edge", "firefox", "brave"]
+SUPPORTED_BROWSERS = set(DEFAULT_ORDER) | {CUSTOM_CHROMIUM_BROWSER}
+browser_order = list(DEFAULT_ORDER)
+if custom_chromium_user_data_dir():
+    browser_order.insert(0, CUSTOM_CHROMIUM_BROWSER)
 env_browser = os.environ.get("TWITTER_BROWSER", "").strip().lower()
-if env_browser in {"arc", "chrome", "edge", "firefox", "brave"}:
-    browser_order = [env_browser] + [b for b in DEFAULT_ORDER if b != env_browser]
-else:
-    browser_order = DEFAULT_ORDER
-browser_fns = {
-    "arc": browser_cookie3.arc,
-    "chrome": browser_cookie3.chrome,
-    "edge": browser_cookie3.edge,
-    "firefox": browser_cookie3.firefox,
-    "brave": browser_cookie3.brave,
-}
+if env_browser in SUPPORTED_BROWSERS:
+    browser_order = [env_browser] + [b for b in browser_order if b != env_browser]
 attempts = []
 
 for name in browser_order:
-    fn = browser_fns[name]
-    if name in CHROMIUM_BASE_DIRS:
+    try:
+        fn = get_browser_cookie_fn(name)
+    except AttributeError as exc:
+        attempts.append(f"{name}=missing-loader: {exc}")
+        continue
+    if name in CHROMIUM_BASE_DIRS or name == CUSTOM_CHROMIUM_BROWSER:
         cookie_files = iter_cookie_files(name)
         if not cookie_files:
+            if name == CUSTOM_CHROMIUM_BROWSER:
+                attempts.append(f"{name}=not-found")
+                continue
             try:
                 jar = fn()
             except Exception as exc:
@@ -455,7 +583,7 @@ for name in browser_order:
             attempts.append(f"{name}=no-cookies")
             continue
         for cf in cookie_files:
-            pname = os.path.basename(os.path.dirname(cf))
+            pname = profile_name_from_cookie_file(cf)
             try:
                 jar = fn(cookie_file=cf)
             except Exception as exc:
@@ -615,6 +743,10 @@ def get_cookies() -> Dict[str, str]:
             lines.append("")
         lines.append("Option 1: Set TWITTER_AUTH_TOKEN and TWITTER_CT0 environment variables")
         lines.append("Option 2: Make sure you are logged into x.com in your browser (Arc/Chrome/Edge/Firefox/Brave)")
+        lines.append(
+            "Option 3: For a custom Chromium profile, set TWITTER_CHROMIUM_USER_DATA_DIR "
+            "to its --user-data-dir"
+        )
         lines.append("")
         lines.append("Run 'twitter -v <command>' for debug diagnostics.")
         raise AuthenticationError("\n".join(lines))

@@ -66,6 +66,16 @@ def test_load_from_env_logs_incomplete_env(monkeypatch, caplog) -> None:
     assert "Environment cookies incomplete" in caplog.text
 
 
+def test_get_browser_order_prepends_custom_chromium_dir(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("TWITTER_BROWSER", raising=False)
+    monkeypatch.setenv("TWITTER_CHROMIUM_USER_DATA_DIR", str(tmp_path))
+
+    order = auth._get_browser_order()
+
+    assert order[0] == "custom-chromium"
+    assert "chrome" in order
+
+
 def test_extract_cookies_from_jar_logs_missing_required_cookies(caplog) -> None:
     class Cookie:
         def __init__(self, domain: str, name: str, value: str) -> None:
@@ -135,7 +145,9 @@ def test_extract_via_subprocess_script_includes_arc(monkeypatch) -> None:
     cookies, diagnostics = auth._extract_via_subprocess()
 
     assert cookies is None
-    assert '"arc": browser_cookie3.arc' in seen["script"]
+    assert 'DEFAULT_ORDER = ["arc", "chrome", "edge", "firefox", "brave"]' in seen["script"]
+    assert 'CUSTOM_CHROMIUM_BROWSER = "custom-chromium"' in seen["script"]
+    assert "browser_cookie3.chromium(" in seen["script"]
 
 
 def test_extract_via_subprocess_retries_uv_when_current_env_has_no_output(monkeypatch) -> None:
@@ -243,6 +255,25 @@ def test_iter_chrome_cookie_files_env_override(monkeypatch, tmp_path) -> None:
     assert "Profile 5" in paths[0]
 
 
+def test_iter_chrome_cookie_files_supports_custom_user_data_dir(monkeypatch, tmp_path) -> None:
+    root = tmp_path / "Ungoogled Chromium"
+    network_dir = root / "Profile 1" / "Network"
+    network_dir.mkdir(parents=True)
+    cookie_file = network_dir / "Cookies"
+    cookie_file.touch()
+    local_state = root / "Local State"
+    local_state.touch()
+
+    monkeypatch.setenv("TWITTER_CHROMIUM_USER_DATA_DIR", str(root))
+    monkeypatch.delenv("TWITTER_CHROME_PROFILE", raising=False)
+
+    paths = auth._iter_chrome_cookie_files("custom-chromium")
+
+    assert paths == [str(cookie_file)]
+    assert auth._profile_name_from_cookie_file(str(cookie_file)) == "Profile 1"
+    assert auth._chromium_key_file_for_cookie(str(cookie_file)) == str(local_state)
+
+
 def test_iter_chrome_cookie_files_edge_linux_uses_microsoft_edge_path(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(auth.sys, "platform", "linux")
     edge_dir = tmp_path / ".config" / "microsoft-edge"
@@ -320,6 +351,42 @@ def test_extract_in_process_tries_multiple_profiles(monkeypatch, tmp_path) -> No
     assert cookies is not None
     assert cookies["auth_token"] == "tok123"
     assert cookies["ct0"] == "csrf456"
+
+
+def test_extract_in_process_uses_chromium_loader_for_custom_dir(monkeypatch, tmp_path) -> None:
+    class Cookie:
+        def __init__(self, domain: str, name: str, value: str) -> None:
+            self.domain = domain
+            self.name = name
+            self.value = value
+
+    root = tmp_path / "User Data"
+    profile_dir = root / "Default" / "Network"
+    profile_dir.mkdir(parents=True)
+    cookie_file = profile_dir / "Cookies"
+    cookie_file.touch()
+    local_state = root / "Local State"
+    local_state.touch()
+    seen = {}
+
+    def chromium(cookie_file=None, key_file=None):
+        seen["cookie_file"] = cookie_file
+        seen["key_file"] = key_file
+        return [
+            Cookie(".x.com", "auth_token", "custom-token"),
+            Cookie(".x.com", "ct0", "custom-csrf"),
+        ]
+
+    monkeypatch.setenv("TWITTER_CHROMIUM_USER_DATA_DIR", str(root))
+    monkeypatch.setattr(auth, "_get_browser_order", lambda: ["custom-chromium"])
+    monkeypatch.setitem(sys.modules, "browser_cookie3", SimpleNamespace(chromium=chromium))
+
+    cookies, diagnostics = auth._extract_in_process()
+
+    assert diagnostics == []
+    assert cookies is not None
+    assert cookies["auth_token"] == "custom-token"
+    assert seen == {"cookie_file": str(cookie_file), "key_file": str(local_state)}
 
 
 def test_diagnose_keychain_issues_detects_decryption_error(monkeypatch) -> None:

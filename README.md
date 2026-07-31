@@ -190,6 +190,17 @@ TWITTER_CHROME_PROFILE="Profile 2" twitter feed
 TWITTER_BROWSER=chrome twitter feed    # Supported: arc, chrome, edge, firefox, brave
 ```
 
+**Custom Chromium profile:** For ungoogled-chromium or another Chromium installation
+started with `--user-data-dir`, point twitter-cli at that directory:
+
+```bash
+TWITTER_CHROMIUM_USER_DATA_DIR="/path/to/user-data-dir" twitter feed
+```
+
+The path may also point directly to a profile directory. Set
+`TWITTER_CHROME_PROFILE="Profile 2"` as well to select one profile below a
+User Data root.
+
 After loading cookies, the CLI performs lightweight verification. Commands that require account access fail fast on clear auth errors (`401/403`).
 
 ### Proxy Support
@@ -279,6 +290,7 @@ Mode behavior:
 
 - `No Twitter cookies found`
   - Ensure you are logged in to `x.com` in a supported browser (Arc/Chrome/Edge/Firefox/Brave).
+  - For a custom Chromium profile, set `TWITTER_CHROMIUM_USER_DATA_DIR` to its `--user-data-dir`.
   - Or set `TWITTER_AUTH_TOKEN` and `TWITTER_CT0` manually.
   - Run with `-v` to see browser extraction diagnostics.
 
@@ -513,6 +525,16 @@ TWITTER_CHROME_PROFILE="Profile 2" twitter feed
 TWITTER_BROWSER=chrome twitter feed    # 支持: arc, chrome, edge, firefox, brave
 ```
 
+**自定义 Chromium Profile**：如果使用 ungoogled-chromium，或通过
+`--user-data-dir` 启动其他 Chromium，可直接指定该目录：
+
+```bash
+TWITTER_CHROMIUM_USER_DATA_DIR="/path/to/user-data-dir" twitter feed
+```
+
+该路径也可以直接指向某个 Profile 目录；若它指向 User Data 根目录，可再用
+`TWITTER_CHROME_PROFILE="Profile 2"` 选择其中一个 Profile。
+
 ### 代理支持
 
 设置 `TWITTER_PROXY` 环境变量即可：
@@ -551,7 +573,7 @@ score = likes_w * likes
 
 ### 常见问题
 
-- 报错 `No Twitter cookies found`：请先登录 `x.com`，并确认浏览器为 Arc/Chrome/Edge/Firefox/Brave 之一，或手动设置环境变量。
+- 报错 `No Twitter cookies found`：请先登录 `x.com`，并确认浏览器为 Arc/Chrome/Edge/Firefox/Brave 之一；自定义 Chromium 可将 `TWITTER_CHROMIUM_USER_DATA_DIR` 指向 `--user-data-dir`，或手动设置认证环境变量。
 - 如需查看浏览器提取细节，可加 `-v` 打开诊断日志。
 - 报错 `Cookie expired or invalid`：Cookie 过期，重新登录后重试。
 - 报错 `Unable to get key for cookie decryption`（macOS Keychain 问题）：
