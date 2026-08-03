@@ -1103,8 +1103,15 @@ class TwitterClient:
             # a different TLS fingerprint on the same IP — a detection vector.
             cffi_session = _get_cffi_session()
             ct_headers = _gen_ct_headers()
+            # Logged-out x.com serves the new "x-web" frontend, which no longer
+            # references ondemand.s; the authenticated /home page still serves
+            # the legacy responsive-web frontend the CT algorithm needs.
+            authed_headers = dict(ct_headers)
+            authed_headers["Cookie"] = self._cookie_string or (
+                "auth_token=%s; ct0=%s" % (self._auth_token, self._ct0)
+            )
             home_page = cffi_session.get(
-                "https://x.com", headers=ct_headers, timeout=10,
+                "https://x.com/home", headers=authed_headers, timeout=10,
             )
             home_page_response = bs4.BeautifulSoup(home_page.content, "html.parser")
             ondemand_url = get_ondemand_file_url(response=home_page_response)
