@@ -60,6 +60,7 @@ from .formatter import (
     print_tweet_table,
     print_user_profile,
     print_user_table,
+    tweet_thread_to_markdown,
 )
 from .models import Tweet, UserProfile
 from .output import (
@@ -849,30 +850,78 @@ def likes(ctx, screen_name, max_count, as_json, as_yaml, output_file, do_filter,
     _run_guarded(_run)
 
 
+def _tweet_markdown_path(tweet: Tweet) -> Path:
+    """Build a safe, non-overwriting Markdown path from the first sentence."""
+    text = tweet.text.strip()
+    end = re.search(r"[.!?。！？]|\n", text)
+    sentence = text[: end.start() + (0 if end.group() == "\n" else 1)] if end else text
+    sentence = sentence.rstrip(".!?。！？")
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", sentence)
+    stem = re.sub(r"\s+", " ", stem).strip(" .")
+    stem = stem.encode("utf-8")[:200].decode("utf-8", "ignore").rstrip(" .")
+    stem = stem or "Tweet %s" % tweet.id
+
+    path = Path.cwd() / ("%s.md" % stem)
+    number = 2
+    while path.exists():
+        path = Path.cwd() / ("%s (%d).md" % (stem, number))
+        number += 1
+    return path
+
+
 @cli.command()
 @click.argument("tweet_id")
 @click.option("--max", "-n", "max_count", type=int, default=None, help="Max replies to fetch.")
 @click.option("--full-text", is_flag=True, help="Show full reply text in table output.")
+@click.option(
+    "--markdown",
+    "as_markdown",
+    is_flag=True,
+    help="Save tweet and replies as Markdown in the current directory.",
+)
 @structured_output_options
 @click.pass_context
-def tweet(ctx, tweet_id, max_count, full_text, as_json, as_yaml):
-    # type: (Any, str, int, bool, bool, bool) -> None
+def tweet(ctx, tweet_id, max_count, full_text, as_markdown, as_json, as_yaml):
+    # type: (Any, str, int, bool, bool, bool, bool) -> None
     """View a tweet and its replies. TWEET_ID is the numeric tweet ID or full URL."""
     compact = ctx.obj.get("compact", False)
+    if as_markdown and (as_json or as_yaml or compact):
+        raise click.UsageError("--markdown does not combine with --json, --yaml, or --compact.")
     tweet_id = _normalize_tweet_id(tweet_id)
     config = load_config()
-    rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
+    rich_output = (
+        use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
+        and not as_markdown
+    )
+    default_count = (
+        config.get("rateLimit", {}).get("maxCount", 200)
+        if as_markdown
+        else config.get("fetch", {}).get("count", 50)
+    )
+    fetch_count = _resolve_fetch_count(max_count, default_count)
     try:
         client = _get_client(config, quiet=not rich_output)
         if rich_output:
             console.print("🐦 Fetching tweet %s...\n" % tweet_id)
         start = time.time()
-        tweets = client.fetch_tweet_detail(tweet_id, _resolve_configured_count(config, max_count))
+        tweets = client.fetch_tweet_detail(tweet_id, fetch_count)
         elapsed = time.time() - start
         if rich_output:
             console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
     except (TwitterError, RuntimeError) as exc:
         _exit_with_error(exc)
+
+    if as_markdown:
+        if not tweets:
+            raise click.ClickException("Tweet not found.")
+        output_path = _tweet_markdown_path(tweets[0])
+        try:
+            with output_path.open("x", encoding="utf-8") as output:
+                output.write(tweet_thread_to_markdown(tweets))
+        except OSError as exc:
+            raise click.ClickException("Could not save Markdown: %s" % exc)
+        click.echo("Saved Markdown to %s" % output_path)
+        return
 
     _emit_tweet_detail(tweets, compact=compact, as_json=as_json, as_yaml=as_yaml, full_text=full_text)
 

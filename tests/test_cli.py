@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import pytest
 import yaml
@@ -279,6 +280,64 @@ def test_cli_tweet_accepts_shared_url_with_query(monkeypatch) -> None:
     result = runner.invoke(cli, ["tweet", "https://x.com/user/status/12345?s=20"])
 
     assert result.exit_code == 0
+
+
+def test_cli_tweet_markdown_saves_first_sentence_with_numbered_collision(
+    monkeypatch,
+    tweet_factory,
+) -> None:
+    tweets = [
+        tweet_factory("100", text="First / sentence? Second sentence."),
+        tweet_factory(
+            "101",
+            text="A reply",
+            author=Author(id="u2", name="Bob", screen_name="bob"),
+        ),
+    ]
+
+    class FakeClient:
+        def fetch_tweet_detail(self, tweet_id: str, max_count: int):
+            assert tweet_id == "100"
+            assert max_count == 200
+            return tweets
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda: {
+            "fetch": {"count": 50},
+            "filter": {},
+            "rateLimit": {"maxCount": 200},
+        },
+    )
+    runner = CliRunner()
+
+    with runner.isolated_filesystem():
+        original = Path("First - sentence.md")
+        original.write_text("keep me", encoding="utf-8")
+
+        result = runner.invoke(cli, ["tweet", "100", "--markdown"])
+
+        exported = Path("First - sentence (2).md")
+        assert result.exit_code == 0
+        assert original.read_text(encoding="utf-8") == "keep me"
+        assert exported.read_text(encoding="utf-8") == tweet_thread_to_markdown(tweets)
+        assert str(exported.resolve()) in result.output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["tweet", "100", "--markdown", "--json"],
+        ["tweet", "100", "--markdown", "--yaml"],
+        ["-c", "tweet", "100", "--markdown"],
+    ],
+)
+def test_cli_tweet_markdown_rejects_other_output_modes(args) -> None:
+    result = CliRunner().invoke(cli, args)
+
+    assert result.exit_code == 2
+    assert "does not combine" in result.output
 
 
 def test_cli_article_accepts_article_url_and_json(monkeypatch) -> None:
