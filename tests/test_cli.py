@@ -333,6 +333,28 @@ def test_cli_tweet_markdown_saves_first_sentence_with_numbered_collision(
         assert str(exported.resolve()) in result.output
 
 
+def test_cli_tweet_markdown_uses_rate_limit_max_count_by_default(monkeypatch, tweet_factory) -> None:
+    received_counts = []
+
+    class FakeClient:
+        def fetch_tweet_detail(self, tweet_id: str, max_count: int):
+            assert tweet_id == "100"
+            received_counts.append(max_count)
+            return [tweet_factory("100", text="Default count")]
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda: {"fetch": {"count": 50}, "filter": {}, "rateLimit": {"maxCount": 200}},
+    )
+
+    with CliRunner().isolated_filesystem():
+        result = CliRunner().invoke(cli, ["tweet", "100", "--markdown"])
+
+    assert result.exit_code == 0
+    assert received_counts == [200]
+
+
 @pytest.mark.parametrize(
     "args",
     [
