@@ -121,6 +121,7 @@ twitter search "trending" --filter              # Apply ranking filter
 # Tweet detail (view tweet + replies)
 twitter tweet 1234567890
 twitter tweet 1234567890 --full-text
+twitter tweet 1234567890 --markdown      # Save tweet + replies as Markdown in the current folder
 twitter tweet https://x.com/user/status/1234567890
 
 # Open tweet by index from last list output
@@ -445,6 +446,7 @@ twitter search "trending" --filter              # 启用排序筛选
 # 推文详情
 twitter tweet 1234567890
 twitter tweet 1234567890 --full-text
+twitter tweet 1234567890 --markdown      # 将推文和回复保存为 Markdown 到当前文件夹
 
 # 通过序号打开上次列表里的推文
 twitter show 2                         # 打开上次 feed/search 的第 2 条
