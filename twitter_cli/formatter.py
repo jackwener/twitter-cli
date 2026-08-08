@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from typing import List, Optional
 
@@ -167,6 +168,42 @@ def print_tweet_detail(tweet: Tweet, console: Optional[Console] = None) -> None:
         border_style="blue",
         expand=True,
     ))
+
+
+def _tweet_markdown_lines(tweet: Tweet, heading: str) -> List[str]:
+    """Render one tweet without metadata or downloaded media."""
+    text = tweet.text.strip()
+    if tweet.quoted_tweet:
+        text = re.sub(r"\s*https://t\.co/[A-Za-z0-9_]+\s*$", "", text).rstrip()
+
+    lines = ["%s @%s" % (heading, tweet.author.screen_name)]
+    if text:
+        lines.extend(["", text])
+    for media in tweet.media:
+        if media.type == "photo" and media.url:
+            lines.extend(["", "![](%s)" % media.url])
+    if tweet.quoted_tweet:
+        quoted = tweet.quoted_tweet
+        lines.extend([
+            "",
+            "https://x.com/%s/status/%s" % (quoted.author.screen_name, quoted.id),
+        ])
+    return lines
+
+
+def tweet_thread_to_markdown(tweets: List[Tweet]) -> str:
+    """Convert a tweet and its replies into a Markdown document."""
+    if not tweets:
+        return ""
+
+    lines = ["# Tweet", ""]
+    lines.extend(_tweet_markdown_lines(tweets[0], "##"))
+    if len(tweets) > 1:
+        lines.extend(["", "## Replies"])
+        for reply in tweets[1:]:
+            lines.append("")
+            lines.extend(_tweet_markdown_lines(reply, "###"))
+    return "\n".join(lines).strip() + "\n"
 
 
 def article_to_markdown(tweet: Tweet) -> str:

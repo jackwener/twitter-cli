@@ -3,15 +3,64 @@ from __future__ import annotations
 import json
 import time
 
-from click.testing import CliRunner
 import pytest
-from rich.console import Console
 import yaml
+from click.testing import CliRunner
+from rich.console import Console
 
 from twitter_cli.cli import cli
-from twitter_cli.formatter import article_to_markdown, print_tweet_table
-from twitter_cli.models import Author, BookmarkFolder, Metrics, Tweet, UserProfile
+from twitter_cli.formatter import article_to_markdown, print_tweet_table, tweet_thread_to_markdown
+from twitter_cli.models import Author, BookmarkFolder, Metrics, Tweet, TweetMedia, UserProfile
 from twitter_cli.serialization import tweets_to_json
+
+
+def test_tweet_thread_to_markdown_contains_only_requested_fields() -> None:
+    quoted = Tweet(
+        id="900",
+        text="Quoted text must not appear",
+        author=Author(id="u9", name="Quoted", screen_name="quoted"),
+        metrics=Metrics(likes=99, views=999),
+        created_at="2026-08-01",
+    )
+    main = Tweet(
+        id="100",
+        text="Main tweet https://t.co/quote",
+        author=Author(
+            id="u1",
+            name="Alice",
+            screen_name="alice",
+            profile_image_url="https://images.example/alice-avatar.jpg",
+        ),
+        metrics=Metrics(likes=10, views=100),
+        created_at="2026-08-02",
+        media=[TweetMedia(type="photo", url="https://images.example/main.jpg")],
+        quoted_tweet=quoted,
+    )
+    reply = Tweet(
+        id="101",
+        text="Reply text",
+        author=Author(
+            id="u2",
+            name="Bob",
+            screen_name="bob",
+            profile_image_url="https://images.example/bob-avatar.jpg",
+        ),
+        metrics=Metrics(likes=20, views=200),
+        created_at="2026-08-03",
+        media=[TweetMedia(type="photo", url="https://images.example/reply.jpg")],
+    )
+
+    assert tweet_thread_to_markdown([main, reply]) == (
+        "# Tweet\n\n"
+        "## @alice\n\n"
+        "Main tweet\n\n"
+        "![](https://images.example/main.jpg)\n\n"
+        "https://x.com/quoted/status/900\n\n"
+        "## Replies\n\n"
+        "### @bob\n\n"
+        "Reply text\n\n"
+        "![](https://images.example/reply.jpg)\n"
+    )
 
 
 def test_cli_user_command_works_with_client_factory(monkeypatch) -> None:
