@@ -859,12 +859,12 @@ def _tweet_markdown_path(tweet: Tweet) -> Path:
     stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", sentence)
     stem = re.sub(r"\s+", " ", stem).strip(" .")
     stem = stem.encode("utf-8")[:200].decode("utf-8", "ignore").rstrip(" .")
-    stem = stem or "Tweet %s" % tweet.id
+    stem = stem or f"Tweet {tweet.id}"
 
-    path = Path.cwd() / ("%s.md" % stem)
+    path = Path.cwd() / f"{stem}.md"
     number = 2
     while path.exists():
-        path = Path.cwd() / ("%s (%d).md" % (stem, number))
+        path = Path.cwd() / f"{stem} ({number}).md"
         number += 1
     return path
 
@@ -898,8 +898,8 @@ def tweet(ctx, tweet_id, max_count, full_text, as_markdown, as_json, as_yaml):
         if as_markdown
         else config.get("fetch", {}).get("count", 50)
     )
-    fetch_count = _resolve_fetch_count(max_count, default_count)
     try:
+        fetch_count = _resolve_fetch_count(max_count, default_count)
         client = _get_client(config, quiet=not rich_output)
         if rich_output:
             console.print("🐦 Fetching tweet %s...\n" % tweet_id)
@@ -919,8 +919,8 @@ def tweet(ctx, tweet_id, max_count, full_text, as_markdown, as_json, as_yaml):
             with output_path.open("x", encoding="utf-8") as output:
                 output.write(tweet_thread_to_markdown(tweets))
         except OSError as exc:
-            raise click.ClickException("Could not save Markdown: %s" % exc)
-        click.echo("Saved Markdown to %s" % output_path)
+            raise click.ClickException(f"Could not save Markdown: {exc}")
+        click.echo(f"Saved Markdown to {output_path}")
         return
 
     _emit_tweet_detail(tweets, compact=compact, as_json=as_json, as_yaml=as_yaml, full_text=full_text)

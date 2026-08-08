@@ -170,28 +170,28 @@ def print_tweet_detail(tweet: Tweet, console: Optional[Console] = None) -> None:
     ))
 
 
-def _tweet_markdown_lines(tweet: Tweet, heading: str) -> List[str]:
+def _tweet_markdown_lines(tweet: Tweet, heading: str) -> list[str]:
     """Render one tweet without metadata or downloaded media."""
     text = tweet.text.strip()
     if tweet.quoted_tweet:
         text = re.sub(r"\s*https://t\.co/[A-Za-z0-9_]+\s*$", "", text).rstrip()
 
-    lines = ["%s @%s" % (heading, tweet.author.screen_name)]
+    lines = [f"{heading} @{tweet.author.screen_name}"]
     if text:
         lines.extend(["", text])
     for media in tweet.media:
         if media.type == "photo" and media.url:
-            lines.extend(["", "![](%s)" % media.url])
+            lines.extend(["", f"![]({media.url})"])
     if tweet.quoted_tweet:
         quoted = tweet.quoted_tweet
         lines.extend([
             "",
-            "https://x.com/%s/status/%s" % (quoted.author.screen_name, quoted.id),
+            f"https://x.com/{quoted.author.screen_name}/status/{quoted.id}",
         ])
     return lines
 
 
-def tweet_thread_to_markdown(tweets: List[Tweet]) -> str:
+def tweet_thread_to_markdown(tweets: list[Tweet]) -> str:
     """Convert a tweet and its replies into a Markdown document."""
     if not tweets:
         return ""

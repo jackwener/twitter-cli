@@ -282,6 +282,14 @@ def test_cli_tweet_accepts_shared_url_with_query(monkeypatch) -> None:
     assert result.exit_code == 0
 
 
+def test_cli_tweet_invalid_max_reports_friendly_error() -> None:
+    result = CliRunner().invoke(cli, ["tweet", "100", "--max", "0"])
+
+    assert result.exit_code == 1
+    assert "--max must be greater than 0" in result.output
+    assert type(result.exception).__name__ == "SystemExit"
+
+
 def test_cli_tweet_markdown_saves_first_sentence_with_numbered_collision(
     monkeypatch,
     tweet_factory,
@@ -298,7 +306,7 @@ def test_cli_tweet_markdown_saves_first_sentence_with_numbered_collision(
     class FakeClient:
         def fetch_tweet_detail(self, tweet_id: str, max_count: int):
             assert tweet_id == "100"
-            assert max_count == 200
+            assert max_count == 7
             return tweets
 
     monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
@@ -316,7 +324,7 @@ def test_cli_tweet_markdown_saves_first_sentence_with_numbered_collision(
         original = Path("First - sentence.md")
         original.write_text("keep me", encoding="utf-8")
 
-        result = runner.invoke(cli, ["tweet", "100", "--markdown"])
+        result = runner.invoke(cli, ["tweet", "100", "--markdown", "--max", "7"])
 
         exported = Path("First - sentence (2).md")
         assert result.exit_code == 0
