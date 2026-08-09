@@ -332,6 +332,63 @@ class TestBuildHeaders:
         assert headers["sec-ch-ua-platform-version"] == '""'
 
 
+# ── TwitterClient._ensure_client_transaction ─────────────────────────────
+
+class TestEnsureClientTransaction:
+    """The x.com bootstrap fetch must be authenticated.
+
+    Logged out, x.com serves the new "x-web" shell whose HTML has no
+    `ondemand.s` chunk map, so no transaction ID can ever be generated and
+    every transaction-gated endpoint (SearchTimeline included) 404s.
+    """
+
+    @staticmethod
+    def _client(cookie_string=None):
+        client = TwitterClient.__new__(TwitterClient)
+        client._auth_token = "token"
+        client._ct0 = "ct0"
+        client._cookie_string = cookie_string
+        client._client_transaction = None
+        client._ct_init_attempted = False
+        return client
+
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    def _bootstrap_headers(self, cookie_string, mock_ct_headers, mock_session):
+        session = MagicMock()
+        # Abort right after the homepage fetch — we only assert on its headers.
+        session.get = MagicMock(side_effect=Exception("stop after homepage"))
+        mock_session.return_value = session
+
+        client = self._client(cookie_string)
+        with patch.object(client, "_load_ct_cache", return_value=False):
+            client._ensure_client_transaction()
+
+        assert session.get.call_args[0][0] == "https://x.com"
+        return session.get.call_args[1]["headers"]
+
+    def test_homepage_fetch_sends_session_cookies(self):
+        headers = self._bootstrap_headers(None)
+        assert headers["Cookie"] == "auth_token=token; ct0=ct0"
+
+    def test_homepage_fetch_prefers_full_cookie_string(self):
+        headers = self._bootstrap_headers("auth_token=x; ct0=y; other=z")
+        assert headers["Cookie"] == "auth_token=x; ct0=y; other=z"
+
+    @patch("twitter_cli.client._get_cffi_session")
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    def test_bootstrap_failure_is_not_fatal(self, mock_ct_headers, mock_session):
+        session = MagicMock()
+        session.get = MagicMock(side_effect=Exception("network down"))
+        mock_session.return_value = session
+
+        client = self._client()
+        with patch.object(client, "_load_ct_cache", return_value=False):
+            client._ensure_client_transaction()
+
+        assert client._client_transaction is None
+
+
 class TestPaginationBehavior:
     def test_fetch_timeline_can_include_promoted_content(self):
         client = TwitterClient.__new__(TwitterClient)

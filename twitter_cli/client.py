@@ -1103,8 +1103,17 @@ class TwitterClient:
             # a different TLS fingerprint on the same IP — a detection vector.
             cffi_session = _get_cffi_session()
             ct_headers = _gen_ct_headers()
+            # Send session cookies: the logged-OUT x.com shell is now the new
+            # "x-web" build, whose HTML carries no `ondemand.s` chunk map, so
+            # get_ondemand_file_url() finds nothing and transaction IDs never
+            # get generated. The logged-in shell still serves the
+            # responsive-web client-web bundle that does carry the map.
+            home_headers = dict(ct_headers)
+            home_headers["Cookie"] = self._cookie_string or "auth_token=%s; ct0=%s" % (
+                self._auth_token, self._ct0,
+            )
             home_page = cffi_session.get(
-                "https://x.com", headers=ct_headers, timeout=10,
+                "https://x.com", headers=home_headers, timeout=10,
             )
             home_page_response = bs4.BeautifulSoup(home_page.content, "html.parser")
             ondemand_url = get_ondemand_file_url(response=home_page_response)
