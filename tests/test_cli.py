@@ -2,16 +2,66 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
-from click.testing import CliRunner
 import pytest
-from rich.console import Console
 import yaml
+from click.testing import CliRunner
+from rich.console import Console
 
 from twitter_cli.cli import cli
-from twitter_cli.formatter import article_to_markdown, print_tweet_table
-from twitter_cli.models import Author, BookmarkFolder, Metrics, Tweet, UserProfile
+from twitter_cli.formatter import article_to_markdown, print_tweet_table, tweet_thread_to_markdown
+from twitter_cli.models import Author, BookmarkFolder, Metrics, Tweet, TweetMedia, UserProfile
 from twitter_cli.serialization import tweets_to_json
+
+
+def test_tweet_thread_to_markdown_contains_only_requested_fields() -> None:
+    quoted = Tweet(
+        id="900",
+        text="Quoted text must not appear",
+        author=Author(id="u9", name="Quoted", screen_name="quoted"),
+        metrics=Metrics(likes=99, views=999),
+        created_at="2026-08-01",
+    )
+    main = Tweet(
+        id="100",
+        text="Main tweet https://t.co/quote",
+        author=Author(
+            id="u1",
+            name="Alice",
+            screen_name="alice",
+            profile_image_url="https://images.example/alice-avatar.jpg",
+        ),
+        metrics=Metrics(likes=10, views=100),
+        created_at="2026-08-02",
+        media=[TweetMedia(type="photo", url="https://images.example/main.jpg")],
+        quoted_tweet=quoted,
+    )
+    reply = Tweet(
+        id="101",
+        text="Reply text",
+        author=Author(
+            id="u2",
+            name="Bob",
+            screen_name="bob",
+            profile_image_url="https://images.example/bob-avatar.jpg",
+        ),
+        metrics=Metrics(likes=20, views=200),
+        created_at="2026-08-03",
+        media=[TweetMedia(type="photo", url="https://images.example/reply.jpg")],
+    )
+
+    assert tweet_thread_to_markdown([main, reply]) == (
+        "# Tweet\n\n"
+        "## @alice\n\n"
+        "Main tweet\n\n"
+        "![](https://images.example/main.jpg)\n\n"
+        "https://x.com/quoted/status/900\n\n"
+        "## Replies\n\n"
+        "### @bob\n\n"
+        "Reply text\n\n"
+        "![](https://images.example/reply.jpg)\n"
+    )
 
 
 def test_cli_user_command_works_with_client_factory(monkeypatch) -> None:
@@ -230,6 +280,94 @@ def test_cli_tweet_accepts_shared_url_with_query(monkeypatch) -> None:
     result = runner.invoke(cli, ["tweet", "https://x.com/user/status/12345?s=20"])
 
     assert result.exit_code == 0
+
+
+def test_cli_tweet_invalid_max_reports_friendly_error() -> None:
+    result = CliRunner().invoke(cli, ["tweet", "100", "--max", "0"])
+
+    assert result.exit_code == 1
+    assert "--max must be greater than 0" in result.output
+    assert type(result.exception).__name__ == "SystemExit"
+
+
+def test_cli_tweet_markdown_saves_first_sentence_with_numbered_collision(
+    monkeypatch,
+    tweet_factory,
+) -> None:
+    tweets = [
+        tweet_factory("100", text="First / sentence? Second sentence."),
+        tweet_factory(
+            "101",
+            text="A reply",
+            author=Author(id="u2", name="Bob", screen_name="bob"),
+        ),
+    ]
+
+    class FakeClient:
+        def fetch_tweet_detail(self, tweet_id: str, max_count: int):
+            assert tweet_id == "100"
+            assert max_count == 7
+            return tweets
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda: {
+            "fetch": {"count": 50},
+            "filter": {},
+            "rateLimit": {"maxCount": 200},
+        },
+    )
+    runner = CliRunner()
+
+    with runner.isolated_filesystem():
+        original = Path("First - sentence.md")
+        original.write_text("keep me", encoding="utf-8")
+
+        result = runner.invoke(cli, ["tweet", "100", "--markdown", "--max", "7"])
+
+        exported = Path("First - sentence (2).md")
+        assert result.exit_code == 0
+        assert original.read_text(encoding="utf-8") == "keep me"
+        assert exported.read_text(encoding="utf-8") == tweet_thread_to_markdown(tweets)
+        assert str(exported.resolve()) in result.output
+
+
+def test_cli_tweet_markdown_uses_rate_limit_max_count_by_default(monkeypatch, tweet_factory) -> None:
+    received_counts = []
+
+    class FakeClient:
+        def fetch_tweet_detail(self, tweet_id: str, max_count: int):
+            assert tweet_id == "100"
+            received_counts.append(max_count)
+            return [tweet_factory("100", text="Default count")]
+
+    monkeypatch.setattr("twitter_cli.cli._get_client", lambda config=None, quiet=False: FakeClient())
+    monkeypatch.setattr(
+        "twitter_cli.cli.load_config",
+        lambda: {"fetch": {"count": 50}, "filter": {}, "rateLimit": {"maxCount": 200}},
+    )
+
+    with CliRunner().isolated_filesystem():
+        result = CliRunner().invoke(cli, ["tweet", "100", "--markdown"])
+
+    assert result.exit_code == 0
+    assert received_counts == [200]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["tweet", "100", "--markdown", "--json"],
+        ["tweet", "100", "--markdown", "--yaml"],
+        ["-c", "tweet", "100", "--markdown"],
+    ],
+)
+def test_cli_tweet_markdown_rejects_other_output_modes(args) -> None:
+    result = CliRunner().invoke(cli, args)
+
+    assert result.exit_code == 2
+    assert "does not combine" in result.output
 
 
 def test_cli_article_accepts_article_url_and_json(monkeypatch) -> None:
