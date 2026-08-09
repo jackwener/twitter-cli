@@ -208,7 +208,7 @@ class TestBuildGraphqlUrl:
 
     def test_searchtimeline_fallback_query_id_regression(self):
         """Keep SearchTimeline fallback aligned with the live operation after issue #39."""
-        assert FALLBACK_QUERY_IDS["SearchTimeline"] == "VhUd6vHVmLBcw0uX-6jMLA"
+        assert FALLBACK_QUERY_IDS["SearchTimeline"] == "Yw6L66Pw54NHKuq4Dp7b4Q"
 
 
 # ── _best_chrome_target ──────────────────────────────────────────────────
