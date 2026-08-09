@@ -26,27 +26,31 @@ TWITTER_OPENAPI_URL = (
 )
 
 # ── Fallback (hardcoded) queryIds ────────────────────────────────────────
+# NOTE: refreshed against twitter-openapi placeholder.json on 2026-08-09.
+# X rotates these IDs regularly; refresh by fetching
+# https://raw.githubusercontent.com/fa0311/twitter-openapi/refs/heads/main/src/config/placeholder.json
+# and updating any value that drifted.
 FALLBACK_QUERY_IDS = {
-    "HomeTimeline": "c-CzHF1LboFilMpsx4ZCrQ",
-    "HomeLatestTimeline": "BKB7oi212Fi7kQtCBGE4zA",
-    "UserByScreenName": "1VOOyvKkiI3FMmkeDNxM9A",
-    "UserTweets": "q6xj5bs0hapm9309hexA_g",
-    "TweetDetail": "xd_EMdYvB9hfZsZ6Idri0w",
-    "Likes": "lIDpu_NWL7_VhimGGt0o6A",
-    "SearchTimeline": "VhUd6vHVmLBcw0uX-6jMLA",
-    "Bookmarks": "2neUNDqrrFzbLui8yallcQ",
-    "ListLatestTweetsTimeline": "RlZzktZY_9wJynoepm8ZsA",
-    "Followers": "IOh4aS6UdGWGJUYTqliQ7Q",
-    "Following": "zx6e-TLzRkeDO_a7p4b3JQ",
-    "CreateTweet": "IID9x6WsdMnTlXnzXGq8ng",
+    "HomeTimeline": "7zlnp2TxC044W4C1ZUJMHw",
+    "HomeLatestTimeline": "0dateTVgvXjpkf7kyBZy0g",
+    "UserByScreenName": "IGgvgiOx4QZndDHuD3x9TQ",
+    "UserTweets": "36rb3Xj3iJ64Q-9wKDjCcQ",
+    "TweetDetail": "oCon7R-cgWRFy6EfZjaKfg",
+    "Likes": "rk2aeVVvKsyUdG3jf5uiLw",
+    "SearchTimeline": "Yw6L66Pw54NHKuq4Dp7b4Q",
+    "Bookmarks": "XD0ViOeSOW4YoeNTGjVaYw",
+    "ListLatestTweetsTimeline": "FVWmROVvhgjRPC-4jAUh8A",
+    "Followers": "_orfRBQae57vylFPH0Huhg",
+    "Following": "F42cDX8PDFxkbjjq6JrM2w",
+    "CreateTweet": "5CdvsV_zjv4L64XFifAglw",
     "DeleteTweet": "VaenaVgh5q5ih7kvyVjgtg",
     "FavoriteTweet": "lI07N6Otwv1PhnEgXILM7A",
     "UnfavoriteTweet": "ZYKSe-w7KEslx3JhSIk5LA",
-    "CreateRetweet": "ojPdsZsimiJrUGLR1sjUtA",
-    "DeleteRetweet": "iQtK4dl5hBmXewYZuEOKVw",
+    "CreateRetweet": "mbRO74GrOvSfRcJnlMapnQ",
+    "DeleteRetweet": "ZyZigVsNiFO6v1dEks1eWg",
     "CreateBookmark": "aoDbu3RHznuiSkQ9aNM67Q",
     "DeleteBookmark": "Wlmlj2-xzyS1GN3a6cj-mQ",
-    "TweetResultByRestId": "7xflPyRiUxGVbJd4uWmbfg",
+    "TweetResultByRestId": "tCVRZ3WCvoj0BVO7BKnL-Q",
     "BookmarkFoldersSlice": "i78YDd0Tza-dV4SYs58kRg",
     "BookmarkFolderTimeline": "hNY7X2xE2N7HVF6Qb_mu6w",
 }
