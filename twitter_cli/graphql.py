@@ -27,25 +27,25 @@ TWITTER_OPENAPI_URL = (
 
 # ── Fallback (hardcoded) queryIds ────────────────────────────────────────
 FALLBACK_QUERY_IDS = {
-    "HomeTimeline": "c-CzHF1LboFilMpsx4ZCrQ",
-    "HomeLatestTimeline": "BKB7oi212Fi7kQtCBGE4zA",
-    "UserByScreenName": "1VOOyvKkiI3FMmkeDNxM9A",
-    "UserTweets": "q6xj5bs0hapm9309hexA_g",
-    "TweetDetail": "xd_EMdYvB9hfZsZ6Idri0w",
-    "Likes": "lIDpu_NWL7_VhimGGt0o6A",
-    "SearchTimeline": "VhUd6vHVmLBcw0uX-6jMLA",
-    "Bookmarks": "2neUNDqrrFzbLui8yallcQ",
-    "ListLatestTweetsTimeline": "RlZzktZY_9wJynoepm8ZsA",
-    "Followers": "IOh4aS6UdGWGJUYTqliQ7Q",
-    "Following": "zx6e-TLzRkeDO_a7p4b3JQ",
-    "CreateTweet": "IID9x6WsdMnTlXnzXGq8ng",
+    "HomeTimeline": "HCosKfLNW1AcOo3la3mMgg",
+    "HomeLatestTimeline": "U0cdisy7QFIoTfu3-Okw0A",
+    "UserByScreenName": "qRednkZG-rn1P6b48NINmQ",
+    "UserTweets": "SXVCYB8XHSS25nzIljNtZA",
+    "TweetDetail": "XMOz5h24KAZ86qKffKTLdQ",
+    "Likes": "xA8fDIbrJfy4ojjjXmSR-A",
+    "SearchTimeline": "hyPfJYJ_XAtDYoslQc-Rgg",
+    "Bookmarks": "uzboyXSHSJrR-mGJqep0TQ",
+    "ListLatestTweetsTimeline": "ZBbXrl0FVnTqp7K6EAADog",
+    "Followers": "JNyQdTISpzCkj_1fqxDvFg",
+    "Following": "qGZZDF3mp91q7X22s3HxpA",
+    "CreateTweet": "WXTdKnLddrQOunD6MhWi3g",
     "DeleteTweet": "VaenaVgh5q5ih7kvyVjgtg",
     "FavoriteTweet": "lI07N6Otwv1PhnEgXILM7A",
     "UnfavoriteTweet": "ZYKSe-w7KEslx3JhSIk5LA",
-    "CreateRetweet": "ojPdsZsimiJrUGLR1sjUtA",
+    "CreateRetweet": "ojPdsZsimiJrUGLR1sjVsA",
     "DeleteRetweet": "iQtK4dl5hBmXewYZuEOKVw",
     "CreateBookmark": "aoDbu3RHznuiSkQ9aNM67Q",
-    "DeleteBookmark": "Wlmlj2-xzyS1GN3a6cj-mQ",
+    "DeleteBookmark": "Wlmlj2-xISYCixDmuS8KNg",
     "TweetResultByRestId": "7xflPyRiUxGVbJd4uWmbfg",
     "BookmarkFoldersSlice": "i78YDd0Tza-dV4SYs58kRg",
     "BookmarkFolderTimeline": "hNY7X2xE2N7HVF6Qb_mu6w",
@@ -77,6 +77,35 @@ _DEFAULT_FEATURES = {
 
 # Features dict that gets updated dynamically from x.com JS bundles
 FEATURES = dict(_DEFAULT_FEATURES)
+
+从 GitHub twitter-openapi 动态更新 features（X 改版后 features 变化频繁）
+def _update_features_from_github():
+    """从 GitHub twitter-openapi 更新 features 映射"""
+    import json as _json
+    import urllib.request
+    try:
+        req = urllib.request.Request(TWITTER_OPENAPI_URL)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = _json.loads(r.read())
+        # 合并所有 endpoint 的 features
+        for op_name, op_data in data.items():
+            if not isinstance(op_data, dict):
+                continue
+            # features 可能在 variables 里或直接在节点里
+            op_features = op_data.get('variables', {}).get('features', {})
+            if not op_features:
+                op_features = op_data.get('features', {})
+            if isinstance(op_features, dict):
+                for k, v in op_features.items():
+                    FEATURES[k] = v  # 覆盖已有值也加入新值
+        import logging
+        logging.getLogger(__name__).info("Updated FEATURES from GitHub: %d keys", len(FEATURES))
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("GitHub features update failed: %s", exc)
+
+# 启动时自动更新
+_update_features_from_github()
 
 # Module-level caches (not thread-safe — CLI is single-threaded)
 _cached_query_ids: Dict[str, str] = {}
@@ -119,14 +148,30 @@ def _scan_bundles(url_fetch_fn):
 
     try:
         from .constants import get_user_agent
-        html = url_fetch_fn("https://x.com", {"user-agent": get_user_agent()})
+        html = url_fetch_fn("https://x.com/search?q=AI&f=live", {"user-agent": get_user_agent()})
+        匹配旧版 responsive-web 和新版 x-web 的 JS URL
         script_pattern = re.compile(
             r'(?:src|href)=["\']'
-            r'(https://abs\.twimg\.com/responsive-web/client-web[^"\']+'
+            r'(https://abs\.twimg\.com/(?:responsive-web/client-web|x-web/x-web)[^"\']+'
             r'\.js)'
             r'["\']'
         )
         script_urls = script_pattern.findall(html)
+        
+        X 改版后 chunk 文件在 entry-client JS 里引用，需要递归扫描
+        # entry-client JS 里 __vite__mapDeps 包含所有 chunk 文件名
+        for main_url in list(script_urls):
+            try:
+                main_bundle = url_fetch_fn(main_url)
+                # 找 assets/xxx.js 引用
+                chunk_refs = re.findall(r'["\']assets/([^"\']+\.js)["\']', main_bundle)
+                base = main_url.rsplit('/', 1)[0] + '/'
+                for chunk_ref in chunk_refs:
+                    chunk_url = base + 'assets/' + chunk_ref
+                    if chunk_url not in script_urls:
+                        script_urls.append(chunk_url)
+            except Exception:
+                continue
     except Exception as exc:  # pragma: no cover - network-dependent branch
         logger.warning("Failed to scan JS bundles: %s", exc)
         return
@@ -204,21 +249,24 @@ def _resolve_query_id(operation_name, prefer_fallback=True, url_fetch_fn=None):
     if cached:
         return cached
 
-    fallback = FALLBACK_QUERY_IDS.get(operation_name)
-    if prefer_fallback and fallback:
-        _cached_query_ids[operation_name] = fallback
-        return fallback
-
+    优先从 X main bundle 获取最新 queryId（搜索页面）
+    # GitHub twitter-openapi 可能也过期了
     if url_fetch_fn:
+        _scan_bundles(url_fetch_fn)
+        cached = _cached_query_ids.get(operation_name)
+        if cached:
+            return cached
+
+        # 如果 _scan_bundles 没找到，再从 GitHub 获取
         github_query_id = _fetch_from_github(url_fetch_fn, operation_name)
         if github_query_id:
             _cached_query_ids[operation_name] = github_query_id
             return github_query_id
 
-        _scan_bundles(url_fetch_fn)
-        cached = _cached_query_ids.get(operation_name)
-        if cached:
-            return cached
+    fallback = FALLBACK_QUERY_IDS.get(operation_name)
+    if prefer_fallback and fallback:
+        _cached_query_ids[operation_name] = fallback
+        return fallback
 
     if fallback:
         _cached_query_ids[operation_name] = fallback
