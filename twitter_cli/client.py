@@ -1109,7 +1109,23 @@ class TwitterClient:
             home_page_response = bs4.BeautifulSoup(home_page.content, "html.parser")
             ondemand_url = get_ondemand_file_url(response=home_page_response)
             if not ondemand_url:
-                raise ValueError("Failed to extract ondemand file URL from homepage")
+                # X redesigned its homepage; the search page still has the
+                # legacy frontend with ondemand.s. Fall back to it.
+                search_page = cffi_session.get(
+                    "https://x.com/search?q=AI&f=live",
+                    headers=ct_headers, timeout=10,
+                )
+                search_response = bs4.BeautifulSoup(
+                    search_page.content, "html.parser"
+                )
+                ondemand_url = get_ondemand_file_url(response=search_response)
+                if not ondemand_url:
+                    raise ValueError(
+                        "Failed to extract ondemand file URL from homepage "
+                        "and search page"
+                    )
+                home_page_response = search_response
+                home_page = search_page
             ondemand_file = cffi_session.get(
                 ondemand_url, headers=ct_headers, timeout=10,
             )
