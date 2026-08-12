@@ -1103,6 +1103,13 @@ class TwitterClient:
             # a different TLS fingerprint on the same IP — a detection vector.
             cffi_session = _get_cffi_session()
             ct_headers = _gen_ct_headers()
+            # x.com serves the logged-out landing page to anonymous requests,
+            # and that page contains no ondemand.s marker for
+            # get_ondemand_file_url() to match. Send the session cookies so we
+            # receive the authenticated app shell instead.
+            ct_headers["Cookie"] = self._cookie_string or (
+                "auth_token=%s; ct0=%s" % (self._auth_token, self._ct0)
+            )
             home_page = cffi_session.get(
                 "https://x.com", headers=ct_headers, timeout=10,
             )
