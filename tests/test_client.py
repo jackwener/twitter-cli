@@ -1545,3 +1545,54 @@ class TestFetchSearchUsesPost:
 
         assert captured.get("product") == "Latest"
         assert captured.get("querySource") == "typed_query"
+
+
+# ── TwitterClient._ensure_client_transaction ─────────────────────────────
+
+class TestEnsureClientTransaction:
+    """The x.com fetch must be authenticated.
+
+    Anonymous requests receive the logged-out landing page, which carries no
+    ondemand.s marker, so get_ondemand_file_url() fails and every subsequent
+    API call goes out without an x-client-transaction-id header.
+    """
+
+    def _make_client(self):
+        client = TwitterClient.__new__(TwitterClient)
+        client._auth_token = "test_token"
+        client._ct0 = "test_ct0"
+        client._cookie_string = None
+        client._client_transaction = None
+        client._ct_init_attempted = False
+        return client
+
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    @patch("twitter_cli.client._get_cffi_session")
+    def test_homepage_fetch_sends_cookies(self, mock_session, mock_ct_headers):
+        session = MagicMock()
+        session.get = MagicMock(side_effect=Exception("stop after first fetch"))
+        mock_session.return_value = session
+
+        client = self._make_client()
+        client._load_ct_cache = lambda: False
+        client._ensure_client_transaction()
+
+        _, kwargs = session.get.call_args
+        cookie = kwargs["headers"]["Cookie"]
+        assert "auth_token=test_token" in cookie
+        assert "ct0=test_ct0" in cookie
+
+    @patch("twitter_cli.client._gen_ct_headers", return_value={})
+    @patch("twitter_cli.client._get_cffi_session")
+    def test_full_cookie_string_preferred(self, mock_session, mock_ct_headers):
+        session = MagicMock()
+        session.get = MagicMock(side_effect=Exception("stop after first fetch"))
+        mock_session.return_value = session
+
+        client = self._make_client()
+        client._cookie_string = "auth_token=a; ct0=b; guest_id=c"
+        client._load_ct_cache = lambda: False
+        client._ensure_client_transaction()
+
+        _, kwargs = session.get.call_args
+        assert kwargs["headers"]["Cookie"] == "auth_token=a; ct0=b; guest_id=c"
