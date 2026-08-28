@@ -40,6 +40,7 @@ def tweet_factory():
             article_text=overrides.pop("article_text", None),
             is_subscriber_only=overrides.pop("is_subscriber_only", False),
             is_promoted=overrides.pop("is_promoted", False),
+            possibly_sensitive=overrides.pop("possibly_sensitive", False),
         )
 
     return _make_tweet

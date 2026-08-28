@@ -32,15 +32,7 @@ def tweet_to_dict(tweet: Tweet) -> Dict[str, Any]:
         "createdAt": tweet.created_at,
         "createdAtLocal": format_local_time(tweet.created_at),
         "createdAtISO": format_iso8601(tweet.created_at),
-        "media": [
-            {
-                "type": media.type,
-                "url": media.url,
-                "width": media.width,
-                "height": media.height,
-            }
-            for media in tweet.media
-        ],
+        "media": [_media_to_dict(media) for media in tweet.media],
         "urls": list(tweet.urls),
         "isRetweet": tweet.is_retweet,
         "retweetedBy": tweet.retweeted_by,
@@ -48,6 +40,7 @@ def tweet_to_dict(tweet: Tweet) -> Dict[str, Any]:
         "score": tweet.score,
         "isSubscriberOnly": tweet.is_subscriber_only,
         "isPromoted": tweet.is_promoted,
+        "possiblySensitive": tweet.possibly_sensitive,
     }
     if tweet.article_title is not None:
         data["articleTitle"] = tweet.article_title
@@ -61,8 +54,22 @@ def tweet_to_dict(tweet: Tweet) -> Dict[str, Any]:
                 "screenName": tweet.quoted_tweet.author.screen_name,
                 "name": tweet.quoted_tweet.author.name,
             },
+            "possiblySensitive": tweet.quoted_tweet.possibly_sensitive,
         }
     return data
+
+
+def _media_to_dict(media: TweetMedia) -> Dict[str, Any]:
+    """Convert a TweetMedia dataclass into a JSON-safe dict."""
+    return {
+        "type": media.type,
+        "url": media.url,
+        "width": media.width,
+        "height": media.height,
+        "adultContent": media.adult_content,
+        "graphicViolence": media.graphic_violence,
+        "otherWarning": media.other_warning,
+    }
 
 
 def tweet_from_dict(data: Dict[str, Any]) -> Tweet:
@@ -85,6 +92,7 @@ def tweet_from_dict(data: Dict[str, Any]) -> Tweet:
             ),
             metrics=Metrics(),
             created_at="",
+            possibly_sensitive=bool(quoted_data.get("possiblySensitive", False)),
         )
 
     return Tweet(
@@ -112,6 +120,9 @@ def tweet_from_dict(data: Dict[str, Any]) -> Tweet:
                 url=str(item.get("url") or ""),
                 width=_optional_int(item.get("width")),
                 height=_optional_int(item.get("height")),
+                adult_content=bool(item.get("adultContent", False)),
+                graphic_violence=bool(item.get("graphicViolence", False)),
+                other_warning=bool(item.get("otherWarning", False)),
             )
             for item in media_data
             if isinstance(item, dict)
@@ -126,6 +137,7 @@ def tweet_from_dict(data: Dict[str, Any]) -> Tweet:
         article_text=_optional_str(data.get("articleText")),
         is_subscriber_only=bool(data.get("isSubscriberOnly", False)),
         is_promoted=bool(data.get("isPromoted", False)),
+        possibly_sensitive=bool(data.get("possiblySensitive", False)),
     )
 
 

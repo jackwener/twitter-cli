@@ -34,6 +34,9 @@ class TweetMedia:
     url: str
     width: Optional[int] = None
     height: Optional[int] = None
+    adult_content: bool = False
+    graphic_violence: bool = False
+    other_warning: bool = False
 
 
 @dataclass
@@ -54,6 +57,7 @@ class Tweet:
     article_text: Optional[str] = None
     is_subscriber_only: bool = False
     is_promoted: bool = False
+    possibly_sensitive: bool = False
 
 
 @dataclass

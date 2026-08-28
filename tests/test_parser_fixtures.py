@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from twitter_cli.client import TwitterClient
-from twitter_cli.parser import _deep_get, parse_timeline_response
+from twitter_cli.parser import _deep_get, _extract_media, parse_timeline_response
 
 
 def _make_client() -> TwitterClient:
@@ -26,6 +26,8 @@ def test_parse_home_timeline_fixture(fixture_loader) -> None:
     assert [tweet.id for tweet in tweets] == ["1", "20"]
     assert cursor == "cursor-bottom-1"
     assert tweets[0].media[0].type == "photo"
+    assert tweets[0].possibly_sensitive is False
+    assert tweets[0].media[0].adult_content is False
     # note_tweet full text should be preferred over legacy.full_text for long tweets
     assert "Show More" in tweets[0].text
     assert tweets[0].text.startswith("Hello\nworld\n")
@@ -34,6 +36,51 @@ def test_parse_home_timeline_fixture(fixture_loader) -> None:
     assert tweets[1].retweeted_by == "bob"
     assert tweets[1].quoted_tweet is not None
     assert tweets[1].quoted_tweet.id == "30"
+
+
+def test_parse_home_timeline_fixture_sensitive_media(fixture_loader) -> None:
+    payload = fixture_loader("home_timeline.json")
+    result = payload["data"]["home"]["home_timeline_urt"]["instructions"][0]["entries"][0]
+    legacy = result["content"]["itemContent"]["tweet_results"]["result"]["legacy"]
+    legacy["possibly_sensitive"] = True
+    legacy["extended_entities"]["media"][0]["ext_sensitive_media_warning"] = {
+        "adult_content": True,
+        "graphic_violence": False,
+        "other": False,
+    }
+
+    tweets, _ = parse_timeline_response(
+        payload,
+        lambda data: _deep_get(data, "data", "home", "home_timeline_urt", "instructions"),
+    )
+
+    assert tweets[0].possibly_sensitive is True
+    assert tweets[0].media[0].adult_content is True
+    assert tweets[0].media[0].graphic_violence is False
+    assert tweets[1].possibly_sensitive is False
+
+
+def test_extract_media_reads_nested_sensitive_warning() -> None:
+    legacy = {
+        "extended_entities": {
+            "media": [
+                {
+                    "type": "photo",
+                    "media_url_https": "https://pbs.twimg.com/media/fake.jpg",
+                    "original_info": {"width": 10, "height": 10},
+                    "media_results": {
+                        "result": {
+                            "sensitive_media_warning": {"graphic_violence": True}
+                        }
+                    },
+                }
+            ]
+        }
+    }
+    media = _extract_media(legacy)
+    assert len(media) == 1
+    assert media[0].graphic_violence is True
+    assert media[0].adult_content is False
 
 
 def test_parse_home_timeline_fixture_marks_promoted_entries(fixture_loader) -> None:
