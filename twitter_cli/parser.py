@@ -60,6 +60,64 @@ def _extract_cursor(content):
 # ── Media / Author extraction ────────────────────────────────────────────
 
 
+def _truthy(value):
+    # type: (Any) -> bool
+    return value is True or value == 1 or value in ("true", "True")
+
+
+def _media_warning(item):
+    # type: (Any) -> Dict[str, bool]
+    """Read adult/graphic/other labels from a GraphQL media entity."""
+    out = {"adult_content": False, "graphic_violence": False, "other": False}
+    if not isinstance(item, dict):
+        return out
+
+    sources = [
+        item.get("ext_sensitive_media_warning"),
+        item.get("sensitive_media_warning"),
+        item.get("extSensitiveMediaWarning"),
+        item.get("sensitiveMediaWarning"),
+    ]
+    media_results = item.get("media_results") or item.get("mediaResults")
+    if isinstance(media_results, dict):
+        result = media_results.get("result") or media_results
+        if isinstance(result, dict):
+            sources.extend(
+                [
+                    result.get("ext_sensitive_media_warning"),
+                    result.get("sensitive_media_warning"),
+                    result.get("extSensitiveMediaWarning"),
+                    result.get("sensitiveMediaWarning"),
+                ]
+            )
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        for key, value in src.items():
+            lk = str(key).replace("-", "_").lower()
+            if lk in ("adult_content", "adultcontent") and _truthy(value):
+                out["adult_content"] = True
+            elif lk in ("graphic_violence", "graphicviolence") and _truthy(value):
+                out["graphic_violence"] = True
+            elif lk in ("other", "other_warning", "otherwarning") and _truthy(value):
+                out["other"] = True
+    return out
+
+
+def _tweet_media(media_type, url, media_item):
+    # type: (str, str, Dict[str, Any]) -> TweetMedia
+    warning = _media_warning(media_item)
+    return TweetMedia(
+        type=media_type,
+        url=url,
+        width=_deep_get(media_item, "original_info", "width"),
+        height=_deep_get(media_item, "original_info", "height"),
+        adult_content=warning["adult_content"],
+        graphic_violence=warning["graphic_violence"],
+        other_warning=warning["other"],
+    )
+
+
 def _extract_media(legacy):
     # type: (Dict[str, Any]) -> List[TweetMedia]
     """Extract media items from tweet legacy data."""
@@ -68,25 +126,18 @@ def _extract_media(legacy):
         media_type = media_item.get("type", "")
         if media_type == "photo":
             media.append(
-                TweetMedia(
-                    type="photo",
-                    url=media_item.get("media_url_https", ""),
-                    width=_deep_get(media_item, "original_info", "width"),
-                    height=_deep_get(media_item, "original_info", "height"),
-                )
+                _tweet_media("photo", media_item.get("media_url_https", ""), media_item)
             )
         elif media_type in {"video", "animated_gif"}:
             variants = media_item.get("video_info", {}).get("variants", [])
             mp4_variants = [v for v in variants if v.get("content_type") == "video/mp4"]
             mp4_variants.sort(key=lambda v: v.get("bitrate", 0), reverse=True)
-            media.append(
-                TweetMedia(
-                    type=media_type,
-                    url=mp4_variants[0]["url"] if mp4_variants else media_item.get("media_url_https", ""),
-                    width=_deep_get(media_item, "original_info", "width"),
-                    height=_deep_get(media_item, "original_info", "height"),
-                )
+            url = (
+                mp4_variants[0]["url"]
+                if mp4_variants
+                else media_item.get("media_url_https", "")
             )
+            media.append(_tweet_media(media_type, url, media_item))
     return media
 
 
@@ -484,6 +535,9 @@ def parse_tweet_result(result, depth=0):
         quoted_tweet=quoted_tweet,
         lang=actual_legacy.get("lang", ""),
         is_subscriber_only=(is_subscriber_only or retweet_subscriber_only) if is_retweet else is_subscriber_only,
+        possibly_sensitive=bool(
+            actual_legacy.get("possibly_sensitive") or actual_legacy.get("possiblySensitive")
+        ),
         **_parse_article(actual_data),
     )
 

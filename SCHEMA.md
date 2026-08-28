@@ -33,6 +33,30 @@ error:
 - `whoami` returns `data.user`
 - write commands also support explicit `--json` / `--yaml`
 
+## Sensitive Media Fields
+
+Tweet objects in `--json` / `--yaml` include Twitter's sensitive-media labels so
+frontends can skip inlining adult or graphic photos:
+
+```yaml
+data:
+  - id: "1234567890"
+    possiblySensitive: true
+    media:
+      - type: photo
+        url: https://pbs.twimg.com/media/example.jpg
+        width: 1200
+        height: 800
+        adultContent: true
+        graphicViolence: false
+        otherWarning: false
+```
+
+- `possiblySensitive` is the tweet-level `legacy.possibly_sensitive` flag
+- media warning fields come from `ext_sensitive_media_warning` /
+  `sensitive_media_warning` on the media entity (false when absent)
+- quoted tweets include `possiblySensitive` on `quotedTweet`
+
 ## Article Fields
 
 `twitter article <id> --json` returns the standard tweet object plus:
