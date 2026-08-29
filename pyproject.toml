@@ -36,6 +36,9 @@ dev = [
     "mypy>=1.14,<1.15",
     "types-PyYAML>=6.0.12",
 ]
+xquik = [
+    "x-twitter-scraper==0.11.2",
+]
 
 [project.urls]
 Homepage = "https://github.com/jackwener/twitter-cli"

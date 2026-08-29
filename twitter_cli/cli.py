@@ -38,6 +38,7 @@ import re
 import sys
 import time
 import urllib.parse
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -81,6 +82,7 @@ from .serialization import (
     user_profile_to_dict,
     users_to_data,
 )
+from .xquik import fetch_xquik_search
 
 ConfigDict = Dict[str, Any]
 TweetList = List[Tweet]
@@ -725,6 +727,13 @@ def user_posts(ctx, screen_name, max_count, as_json, as_yaml, output_file, full_
     default="Top",
     help="Search tab: Top, Latest, Photos, or Videos.",
 )
+@click.option(
+    "--provider",
+    type=click.Choice(["twitter", "xquik"], case_sensitive=False),
+    default="twitter",
+    show_default=True,
+    help="Search provider. Xquik uses an API key instead of browser cookies.",
+)
 @click.option("--from", "from_user", type=str, default=None, help="Only tweets from this user.")
 @click.option("--to", "to_user", type=str, default=None, help="Only tweets directed at this user.")
 @click.option("--lang", type=str, default=None, help="Filter by language (ISO code, e.g. en, fr, ja).")
@@ -750,8 +759,8 @@ def user_posts(ctx, screen_name, max_count, as_json, as_yaml, output_file, full_
 @click.option("--filter", "do_filter", is_flag=True, help="Enable score-based filtering.")
 @click.option("--full-text", is_flag=True, help="Show full tweet text in table output.")
 @click.pass_context
-def search(ctx, query, product, from_user, to_user, lang, since, until, has, exclude, min_likes, min_retweets, max_count, as_json, as_yaml, output_file, do_filter, full_text):
-    # type: (Any, str, str, Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], tuple, tuple, Optional[int], Optional[int], int, bool, bool, Optional[str], bool, bool) -> None
+def search(ctx, query, product, provider, from_user, to_user, lang, since, until, has, exclude, min_likes, min_retweets, max_count, as_json, as_yaml, output_file, do_filter, full_text):
+    # type: (Any, str, str, str, Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], tuple, tuple, Optional[int], Optional[int], int, bool, bool, Optional[str], bool, bool) -> None
     """Search tweets by QUERY string with optional advanced filters.
 
     QUERY is the search keywords (optional when using advanced filters).
@@ -788,10 +797,16 @@ def search(ctx, query, product, from_user, to_user, lang, since, until, has, exc
     config = load_config()
     def _run():
         rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml, compact=compact)
-        client = _get_client(config, quiet=not rich_output)
+        if provider == "xquik":
+            fetch = partial(fetch_xquik_search, composed_query, product=product)
+            title = "'%s' (%s via Xquik)" % (composed_query, product)
+        else:
+            client = _get_client(config, quiet=not rich_output)
+            fetch = partial(client.fetch_search, composed_query, product=product)
+            title = "'%s' (%s)" % (composed_query, product)
         _fetch_and_display(
-            lambda count: client.fetch_search(composed_query, count, product),
-            "'%s' (%s)" % (composed_query, product), "🔍", max_count, as_json, as_yaml, output_file, do_filter, config,
+            fetch,
+            title, "🔍", max_count, as_json, as_yaml, output_file, do_filter, config,
             compact=compact, full_text=full_text,
         )
     _run_guarded(_run)
