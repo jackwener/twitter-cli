@@ -1103,6 +1103,15 @@ class TwitterClient:
             # a different TLS fingerprint on the same IP — a detection vector.
             cffi_session = _get_cffi_session()
             ct_headers = _gen_ct_headers()
+            # Fetch the homepage authenticated: the logged-out page no
+            # longer embeds the ondemand chunk map / loading-x-anim frames
+            # that transaction-ID generation parses, so an anonymous fetch
+            # always fails init and search requests go out without the
+            # x-client-transaction-id header (HTTP 404).
+            ct_headers["Cookie"] = self._cookie_string or (
+                "auth_token=%s; ct0=%s" % (self._auth_token, self._ct0)
+            )
+            ct_headers["X-Csrf-Token"] = self._ct0
             home_page = cffi_session.get(
                 "https://x.com", headers=ct_headers, timeout=10,
             )
